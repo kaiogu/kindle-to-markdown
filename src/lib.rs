@@ -371,34 +371,23 @@ fn write_markdown_files_by_book(
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
 
-    let mut written = Vec::new();
-    let mut current_book = None::<(String, String)>;
-    let mut current_entries = Vec::new();
-
+    let mut grouped_entries: Vec<((String, String), Vec<KindleEntry>)> = Vec::new();
     for entry in entries {
         let book = (entry.title.clone(), entry.author.clone());
-        if current_book.as_ref() != Some(&book) {
-            if let Some((title, author)) = current_book.take() {
-                written.push(write_book_markdown_file(
-                    output_dir,
-                    &title,
-                    &author,
-                    &current_entries,
-                )?);
-                current_entries.clear();
-            }
-            current_book = Some(book);
+        if let Some((_, book_entries)) = grouped_entries.iter_mut().find(|(key, _)| *key == book) {
+            book_entries.push(entry.clone());
+        } else {
+            grouped_entries.push((book, vec![entry.clone()]));
         }
-
-        current_entries.push(entry.clone());
     }
 
-    if let Some((title, author)) = current_book {
+    let mut written = Vec::new();
+    for ((title, author), book_entries) in grouped_entries {
         written.push(write_book_markdown_file(
             output_dir,
             &title,
             &author,
-            &current_entries,
+            &book_entries,
         )?);
     }
 
@@ -719,6 +708,42 @@ Beta
             .expect("book markdown should be readable");
         assert!(first.contains("# Book One by Author A"));
         assert!(!first.contains("Book Two"));
+    }
+
+    #[test]
+    fn groups_non_contiguous_entries_for_the_same_book_into_one_file() {
+        let temp = tempdir().expect("temp dir should exist");
+        let input = r#"Book One (Author A) - Your Highlight on page 1 | Location 1-1 | Added on Monday, January 1, 2024 10:00:00 AM
+
+Alpha
+
+==========
+Book Two (Author B) - Your Highlight on page 2 | Location 2-2 | Added on Monday, January 1, 2024 11:00:00 AM
+
+Beta
+
+==========
+Book One (Author A) - Your Note on page 3 | Location 3-3 | Added on Monday, January 1, 2024 12:00:00 PM
+
+Gamma
+
+==========
+"#;
+        let entries = parse_kindle_clippings(input).expect("input should parse");
+
+        let written = write_markdown_output(
+            &entries,
+            &OutputTarget::Directory(temp.path().to_path_buf()),
+            OutputLayout::ByBook,
+        )
+        .expect("per-book write should succeed");
+
+        assert_eq!(written.len(), 2);
+        let first = fs::read_to_string(temp.path().join("book-one-author-a.md"))
+            .expect("book markdown should be readable");
+        assert!(first.contains("> Alpha"));
+        assert!(first.contains("**Note:** Gamma"));
+        assert!(!first.contains("Beta"));
     }
 
     #[test]

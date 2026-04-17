@@ -1,5 +1,9 @@
 # kindle-to-markdown
 
+[![CI](https://github.com/kaiogu/kindle-to-markdown/actions/workflows/ci.yml/badge.svg)](https://github.com/kaiogu/kindle-to-markdown/actions/workflows/ci.yml)
+![Rust](https://img.shields.io/badge/rust-1.89%2B-f46623)
+![CLI](https://img.shields.io/badge/interface-CLI-2f855a)
+
 Convert Kindle `My Clippings.txt` exports into clean, readable Markdown.
 
 > A small Rust CLI for turning highlights, notes, and bookmarks into something you can keep in a notes app, publish, or version in git.

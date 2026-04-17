@@ -9,6 +9,24 @@ Convert Kindle `My Clippings.txt` exports into clean, readable Markdown.
 
 > A small Rust CLI for turning highlights, notes, and bookmarks into something you can keep in a notes app, publish, or version in git.
 
+## Install
+
+`crates.io` publication is intentionally deferred for now.
+
+Use a GitHub Releases binary for your platform, or build locally with Cargo.
+
+Release assets are attached automatically for:
+
+- Linux: `kindle-to-markdown-x86_64-unknown-linux-gnu.tar.gz`
+- macOS: `kindle-to-markdown-aarch64-apple-darwin.tar.gz`
+- Windows: `kindle-to-markdown-x86_64-pc-windows-msvc.zip`
+
+Local build:
+
+```bash
+cargo build --release
+```
+
 ## What It Does
 
 | Input | Output |
@@ -110,6 +128,7 @@ Write a single Markdown file to an explicit path:
 
 ```bash
 cargo run -- sample_clippings.txt --output my-notes/highlights.md
+cargo run -- sample_clippings.txt --output notes.txt
 ```
 
 Copy raw stdin input to an explicit file while converting:
@@ -136,6 +155,13 @@ Build a release binary:
 ```bash
 cargo build --release
 ./target/release/kindle-to-markdown "My Clippings.txt" --output highlights.md
+```
+
+Windows / PowerShell:
+
+```powershell
+.\kindle-to-markdown.exe --help
+.\kindle-to-markdown.exe "My Clippings.txt" --output highlights.md
 ```
 
 ### Input Rules
@@ -190,6 +216,7 @@ If you pass `--copy-raw`, the raw file is copied too:
 - `--copy-raw PATH`:
   - writes the raw copy exactly to `PATH`
   - works with file input, `--discover`, and `stdin`
+  - `PATH` must be a file path; existing directories are rejected
 
 If `stdout` is the Markdown destination and `--copy-raw` is automatic, the raw file is saved to `clippings/My Clippings.txt`.
 
@@ -229,6 +256,20 @@ no-stats = false
 ```
 
 CLI flags still win over settings.
+
+## Releases
+
+GitHub releases are the current distribution channel.
+
+- `release-plz` manages version PRs and release tagging from Conventional Commits
+- the `Release Binaries` workflow uploads Linux, macOS, and Windows archives when a GitHub release is published
+
+For Windows testing, the normal path is:
+
+1. Merge the desired changes to `main`.
+2. Publish a GitHub release for the version tag.
+3. Download `kindle-to-markdown-x86_64-pc-windows-msvc.zip` from that release.
+4. Extract it and run `.\kindle-to-markdown.exe --help`.
 
 ## Contributor Guide
 

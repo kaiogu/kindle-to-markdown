@@ -182,12 +182,15 @@ pub fn parse_kindle_clippings(content: &str) -> Result<Vec<KindleEntry>> {
     let separator = "==========";
     let chunks: Vec<&str> = content.split(separator).collect();
 
-    let re = Regex::new(
-        r"^(.+?) \((.+?)\) - Your (Highlight|Note|Bookmark) (?:on page \d+ \| )?Location ([^|]+) \| Added on (.+)$",
+    let single_line_re = Regex::new(
+        r"^(.+) \((.+)\) - Your (Highlight|Note|Bookmark) (?:on page \d+ \| )?Location ([^|]+) \| Added on (.+)$",
+    )?;
+    let metadata_re = Regex::new(
+        r"^- Your (Highlight|Note|Bookmark) (?:on page \d+ \| )?Location ([^|]+) \| Added on (.+)$",
     )?;
 
     for chunk in chunks {
-        let chunk = chunk.trim();
+        let chunk = chunk.trim().trim_start_matches('\u{feff}');
         if chunk.is_empty() {
             continue;
         }
@@ -197,16 +200,34 @@ pub fn parse_kindle_clippings(content: &str) -> Result<Vec<KindleEntry>> {
             continue;
         }
 
-        let header = lines[0];
-        let entry_content = lines.get(1..).unwrap_or(&[]).join("\n").trim().to_string();
+        let title_line = lines[0].trim().trim_start_matches('\u{feff}');
 
-        if let Some(captures) = re.captures(header) {
-            let entry = KindleEntry {
+        if let Some(captures) = single_line_re.captures(title_line) {
+            let entry_content = lines.get(1..).unwrap_or(&[]).join("\n").trim().to_string();
+            entries.push(KindleEntry {
                 title: captures[1].to_string(),
                 author: captures[2].to_string(),
                 entry_type: captures[3].to_string(),
                 location: captures[4].trim().to_string(),
                 date: captures[5].trim().to_string(),
+                content: entry_content,
+            });
+            continue;
+        }
+
+        let metadata_line = lines.get(1).map(|line| line.trim());
+        let entry_content = lines.get(2..).unwrap_or(&[]).join("\n").trim().to_string();
+
+        if let (Some((title, author)), Some(metadata)) =
+            (parse_title_and_author(title_line), metadata_line)
+            && let Some(details) = metadata_re.captures(metadata)
+        {
+            let entry = KindleEntry {
+                title,
+                author,
+                entry_type: details[1].to_string(),
+                location: details[2].trim().to_string(),
+                date: details[3].trim().to_string(),
                 content: entry_content,
             };
             entries.push(entry);
@@ -214,6 +235,14 @@ pub fn parse_kindle_clippings(content: &str) -> Result<Vec<KindleEntry>> {
     }
 
     Ok(entries)
+}
+
+fn parse_title_and_author(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+    let author = trimmed.strip_suffix(')')?;
+    let (title, author) = author.rsplit_once(" (")?;
+
+    Some((title.to_string(), author.to_string()))
 }
 
 pub fn convert_to_markdown(entries: &[KindleEntry]) -> String {
@@ -361,7 +390,7 @@ mod tests {
         HostPlatform, OutputLayout, clippings_paths_for_device_root, convert_to_markdown,
         copy_kindle_clippings, default_export_directory, default_pull_destination,
         device_roots_for_platform, find_kindle_clippings_path_from_roots, parse_kindle_clippings,
-        write_markdown_output,
+        parse_title_and_author, write_markdown_output,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -388,6 +417,8 @@ This should be ignored.
 ==========
 "#;
 
+    const TWO_LINE_KINDLE_INPUT: &str = "\u{feff}The Sirens of Titan (Kurt Vonnegut)\n- Your Highlight on page 219 | Location 3355-3356 | Added on Friday, November 17, 2023 1:14:42 PM\n\nHe used it in order to assert the friendship he felt for Rumfoord.\n==========\nThe Conscious Mind (Philosophy of Mind) (David J. Chalmers)\n- Your Note on page 64 | Location 981 | Added on Sunday, December 17, 2023 10:10:11 AM\n\nIs it really though?\n==========\n";
+
     #[test]
     fn parses_supported_entry_types_and_skips_invalid_chunks() {
         let entries = parse_kindle_clippings(SAMPLE_INPUT).expect("sample input should parse");
@@ -399,6 +430,32 @@ This should be ignored.
         assert_eq!(entries[0].location, "234-236");
         assert_eq!(entries[1].content, "Great explanation of ownership here.");
         assert!(entries[2].content.is_empty());
+    }
+
+    #[test]
+    fn parses_two_line_kindle_headers_with_bom() {
+        let entries =
+            parse_kindle_clippings(TWO_LINE_KINDLE_INPUT).expect("two-line input should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "The Sirens of Titan");
+        assert_eq!(entries[0].author, "Kurt Vonnegut");
+        assert_eq!(entries[0].entry_type, "Highlight");
+        assert_eq!(entries[0].location, "3355-3356");
+        assert_eq!(entries[1].title, "The Conscious Mind (Philosophy of Mind)");
+        assert_eq!(entries[1].author, "David J. Chalmers");
+        assert_eq!(entries[1].entry_type, "Note");
+        assert_eq!(entries[1].content, "Is it really though?");
+    }
+
+    #[test]
+    fn parses_title_and_author_using_last_parenthetical_group() {
+        let parsed =
+            parse_title_and_author("The Conscious Mind (Philosophy of Mind) (David J. Chalmers)")
+                .expect("title and author should parse");
+
+        assert_eq!(parsed.0, "The Conscious Mind (Philosophy of Mind)");
+        assert_eq!(parsed.1, "David J. Chalmers");
     }
 
     #[test]

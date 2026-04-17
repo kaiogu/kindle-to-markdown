@@ -56,8 +56,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Polish README presentation
 - Fix bookmark parsing and README workflow
 - Set up CI and contributor workflow
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on Keep a Changelog, and future entries are maintained by `release-plz`.

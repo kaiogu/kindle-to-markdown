@@ -65,11 +65,30 @@ cargo build --release
 This repository ships with local and CI quality gates:
 
 ```bash
+uv run --with pre-commit pre-commit install --hook-type pre-commit --hook-type commit-msg
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 uv run --with pre-commit pre-commit run --all-files
 ```
+
+## Versioning and Releases
+
+This project stays on `0.x` until the CLI surface feels stable. Release automation is driven by Conventional Commits and `release-plz`:
+
+- `fix:` and `perf:` create a patch release.
+- `feat:` also stays patch-level while the project is below `1.0.0`.
+- `feat!:` or any `!` breaking change creates the next minor release in `0.x`.
+
+Examples:
+
+```text
+fix: handle empty bookmark content
+feat(cli): add --stdout alias
+feat!: rename output headings
+```
+
+`release-plz` opens a release PR from commits on `main`, updates `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md`, then creates a Git tag and GitHub release when that PR is merged. If you want the normal CI workflow to run on release PRs too, add a `RELEASE_PLZ_TOKEN` repository secret and give it `contents` and `pull requests` write access.
 
 ## Project Layout
 
@@ -86,6 +105,8 @@ sample_clippings.txt
 - Stable Rust toolchain pinned with `rustfmt` and `clippy`
 - GitHub Actions CI for format, lint, and test checks
 - Pre-commit hooks for local enforcement
+- Conventional commit enforcement for commit messages and PR titles
+- Automated SemVer release PRs with `release-plz`
 - Unit tests covering parse and render behavior
 - Contributor guidance in `AGENTS.md`
 - Permissive `Apache-2.0` license with an explicit patent grant

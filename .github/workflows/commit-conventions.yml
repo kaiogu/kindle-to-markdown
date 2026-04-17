@@ -1,0 +1,30 @@
+name: Commit Conventions
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches:
+      - main
+
+jobs:
+  conventional-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate pull request title
+        if: github.event_name == 'pull_request'
+        run: bash scripts/check-commit-message.sh --message "${{ github.event.pull_request.title }}"
+
+      - name: Validate pull request commits
+        if: github.event_name == 'pull_request'
+        run: bash scripts/check-commit-range.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+
+      - name: Validate pushed commits
+        if: github.event_name == 'push'
+        run: bash scripts/check-commit-range.sh "${{ github.event.before }}" "${{ github.sha }}"

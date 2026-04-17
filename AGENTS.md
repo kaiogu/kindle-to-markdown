@@ -18,7 +18,7 @@ Follow standard Rust style with 4-space indentation and `rustfmt` output as the 
 Add unit tests in `src/main.rs` with `#[cfg(test)]` for pure parsing and Markdown rendering helpers, or move code into `src/lib.rs` if tests start to grow. Name tests after behavior, for example `parses_highlight_entries` or `renders_bookmarks_with_metadata`. Use `sample_clippings.txt` patterns to cover highlights, notes, bookmarks, and malformed entries.
 
 ## Commit & Pull Request Guidelines
-There is no established commit history yet, so use short imperative commit subjects such as `Add note formatting test`. Keep commits focused on one change. PRs should describe the input cases affected, list commands run (`cargo fmt`, `cargo test`, `cargo clippy`), and include sample Markdown output when parser behavior changes.
+Use Conventional Commits for every change: `fix:`, `feat:`, `perf:`, `docs:`, `ci:`, `chore:`. Add a scope when it clarifies the area, for example `feat(parser): handle empty bookmark content`. Breaking changes must use `!`, for example `feat!: rename markdown heading format`. PRs should describe the input cases affected, list commands run (`cargo fmt`, `cargo test`, `cargo clippy`), and include sample Markdown output when parser behavior changes.
 
 ## Security & Configuration Tips
 Treat clipping files as personal data. Do not commit real Kindle exports containing private notes or highlights; use sanitized fixtures instead.

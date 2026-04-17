@@ -1,0 +1,16 @@
+[workspace]
+# This project is released as a git-tagged GitHub release, not as a crates.io package.
+git_only = true
+publish = false
+release_always = false
+git_release_enable = true
+git_release_latest = true
+semver_check = false
+
+# While the project is < 1.0.0, only product changes should trigger release PRs.
+release_commits = "^(feat|fix|perf|refactor)(\\([a-z0-9._/-]+\\))?(!)?: "
+features_always_increment_minor = false
+pr_labels = ["release"]
+
+[changelog]
+protect_breaking_commits = true

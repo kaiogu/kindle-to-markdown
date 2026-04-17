@@ -65,6 +65,12 @@ Print the resolved settings file path:
 cargo run -- --print-settings-path
 ```
 
+Write a commented example settings file:
+
+```bash
+cargo run -- --init-config
+```
+
 Write one Markdown file per book:
 
 ```bash
@@ -171,6 +177,12 @@ Print the exact path for your machine with:
 
 ```bash
 kindle-to-markdown --print-settings-path
+```
+
+Override the default settings file path for a single run with:
+
+```bash
+kindle-to-markdown --config local/settings.toml sample_clippings.txt
 ```
 
 Example `settings.toml`:

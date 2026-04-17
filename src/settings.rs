@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use directories::ProjectDirs;
 use serde::Deserialize;
 use std::fs;
@@ -53,6 +53,44 @@ pub fn load_settings() -> Result<AppSettings> {
     load_settings_from_path(&path)
 }
 
+pub fn resolved_settings_path(override_path: Option<&Path>) -> Result<PathBuf> {
+    match override_path {
+        Some(path) => Ok(path.to_path_buf()),
+        None => settings_path(),
+    }
+}
+
+pub fn example_settings_toml() -> &'static str {
+    r#"# kindle-to-markdown settings
+#
+# Remove the leading `#` to enable a setting.
+
+# discover = true
+# output = "clippings"
+# layout = "by-book"
+# sort-by = "location"
+# dedupe = true
+# copy-raw = true
+# no-stats = false
+"#
+}
+
+pub fn init_settings_file(path: &Path) -> Result<()> {
+    if path.exists() {
+        bail!("settings file already exists at {}", path.display());
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create settings directory {}", parent.display()))?;
+    }
+
+    fs::write(path, example_settings_toml())
+        .with_context(|| format!("failed to write settings file {}", path.display()))?;
+
+    Ok(())
+}
+
 pub fn load_settings_from_path(path: &Path) -> Result<AppSettings> {
     if !path.exists() {
         return Ok(AppSettings::default());
@@ -68,9 +106,11 @@ pub fn load_settings_from_path(path: &Path) -> Result<AppSettings> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSettings, CopyRawSetting, SettingsLayout, SettingsSort, load_settings_from_path,
+        AppSettings, CopyRawSetting, SettingsLayout, SettingsSort, example_settings_toml,
+        init_settings_file, load_settings_from_path, resolved_settings_path,
     };
     use std::fs;
+    use std::path::Path;
     use tempfile::tempdir;
 
     #[test]
@@ -123,5 +163,49 @@ no-stats = true
         let settings = load_settings_from_path(&settings_path).expect("settings should parse");
 
         assert_eq!(settings.copy_raw, Some(CopyRawSetting::Enabled(true)));
+    }
+
+    #[test]
+    fn resolves_override_settings_path() {
+        let path = Path::new("local/custom-settings.toml");
+        assert_eq!(
+            resolved_settings_path(Some(path)).expect("path should resolve"),
+            path
+        );
+    }
+
+    #[test]
+    fn example_settings_template_is_commented() {
+        let template = example_settings_toml();
+
+        assert!(template.contains("# layout = \"by-book\""));
+        assert!(template.contains("# sort-by = \"location\""));
+        assert!(template.contains("# dedupe = true"));
+    }
+
+    #[test]
+    fn initializes_new_settings_file() {
+        let temp = tempdir().expect("temp dir should exist");
+        let path = temp.path().join("nested").join("settings.toml");
+
+        init_settings_file(&path).expect("settings file should be created");
+
+        let content = fs::read_to_string(path).expect("settings file should be readable");
+        assert!(content.contains("# kindle-to-markdown settings"));
+    }
+
+    #[test]
+    fn refuses_to_overwrite_existing_settings_file() {
+        let temp = tempdir().expect("temp dir should exist");
+        let path = temp.path().join("settings.toml");
+        fs::write(&path, "discover = true\n").expect("settings file should be written");
+
+        let error = init_settings_file(&path).expect_err("existing settings should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("settings file already exists at")
+        );
     }
 }

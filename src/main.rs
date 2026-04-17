@@ -4,7 +4,10 @@ use kindle_to_markdown::{
     OutputLayout, OutputTarget, SortKey, convert_to_markdown, copy_kindle_clippings,
     default_export_directory, find_kindle_clippings_path, parse_kindle_clippings, process_entries,
     raw_destination_for_output, render_book_stats, resolve_output_target,
-    settings::{CopyRawSetting, SettingsLayout, SettingsSort, load_settings, settings_path},
+    settings::{
+        CopyRawSetting, SettingsLayout, SettingsSort, init_settings_file, load_settings_from_path,
+        resolved_settings_path,
+    },
     write_markdown_output,
 };
 use std::fs;
@@ -23,6 +26,12 @@ struct Cli {
 
     #[arg(long, default_value_t = false)]
     print_settings_path: bool,
+
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    init_config: bool,
 
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -74,17 +83,24 @@ enum ExportDestination {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let settings_path = resolved_settings_path(cli.config.as_deref())?;
 
-    if cli.print_settings_path {
-        println!("{}", settings_path()?.display());
+    if cli.init_config {
+        init_settings_file(&settings_path)?;
+        println!("Wrote example settings to {}", settings_path.display());
         return Ok(());
     }
 
-    run(cli, io::stdin().is_terminal())
+    if cli.print_settings_path {
+        println!("{}", settings_path.display());
+        return Ok(());
+    }
+
+    run(cli, io::stdin().is_terminal(), &settings_path)
 }
 
-fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
-    let settings = load_settings()?;
+fn run(cli: Cli, stdin_is_terminal: bool, settings_path: &Path) -> Result<()> {
+    let settings = load_settings_from_path(settings_path)?;
     let layout = resolve_layout(cli.layout, settings.layout);
     let sort_key = resolve_sort_key(cli.sort_by, settings.sort_by);
     let dedupe = resolve_dedupe(cli.dedupe, cli.no_dedupe, settings.dedupe);
@@ -528,6 +544,19 @@ mod tests {
     fn cli_parses_copy_raw_with_optional_path() {
         let cli = Cli::parse_from(["kindle-to-markdown", "--copy-raw=local/raw.txt"]);
         assert_eq!(cli.copy_raw, Some("local/raw.txt".to_string()));
+    }
+
+    #[test]
+    fn cli_parses_config_options() {
+        let cli = Cli::parse_from([
+            "kindle-to-markdown",
+            "--config",
+            "local/settings.toml",
+            "--init-config",
+        ]);
+
+        assert_eq!(cli.config, Some(PathBuf::from("local/settings.toml")));
+        assert!(cli.init_config);
     }
 
     #[test]

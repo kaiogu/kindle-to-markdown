@@ -49,6 +49,16 @@ fn write_settings(config_home: &Path, content: &str) -> PathBuf {
     settings_path
 }
 
+fn write_settings_file(path: &Path, content: &str) -> PathBuf {
+    fs::create_dir_all(
+        path.parent()
+            .expect("settings path should have a parent directory"),
+    )
+    .expect("settings directory should be created");
+    fs::write(path, content).expect("settings file should be written");
+    path.to_path_buf()
+}
+
 fn run_cli(args: &[&str]) -> Output {
     Command::new(cli_binary())
         .args(args)
@@ -343,4 +353,53 @@ Sooner
             < stdout.find("> Later").expect("Later entry should exist")
     );
     assert!(stderr.contains("Statistics: 3 entries across 1 books"));
+}
+
+#[test]
+fn explicit_config_path_controls_settings_lookup() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = write_standard_input_file(temp.path());
+    let config_path = temp.path().join("custom").join("settings.toml");
+
+    write_settings_file(
+        &config_path,
+        r#"
+layout = "by-book"
+output = "from-explicit-config"
+"#,
+    );
+
+    let output = Command::new(cli_binary())
+        .current_dir(temp.path())
+        .arg(&input)
+        .arg("--config")
+        .arg(&config_path)
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+    assert!(temp.path().join("from-explicit-config").is_dir());
+}
+
+#[test]
+fn init_config_writes_commented_example_to_explicit_path() {
+    let temp = tempdir().expect("temp dir should exist");
+    let config_path = temp.path().join("generated").join("settings.toml");
+
+    let output = Command::new(cli_binary())
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--init-config")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+    assert!(config_path.is_file());
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let content = fs::read_to_string(config_path).expect("settings file should be readable");
+
+    assert!(stdout.contains("Wrote example settings to"));
+    assert!(content.contains("# layout = \"by-book\""));
+    assert!(content.contains("# sort-by = \"location\""));
 }

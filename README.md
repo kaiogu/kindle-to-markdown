@@ -3,6 +3,7 @@
 [![CI](https://github.com/kaiogu/kindle-to-markdown/actions/workflows/ci.yml/badge.svg)](https://github.com/kaiogu/kindle-to-markdown/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/rust-1.89%2B-f46623)
 ![CLI](https://img.shields.io/badge/interface-CLI-2f855a)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 Convert Kindle `My Clippings.txt` exports into clean, readable Markdown.
 
@@ -87,3 +88,4 @@ sample_clippings.txt
 - Pre-commit hooks for local enforcement
 - Unit tests covering parse and render behavior
 - Contributor guidance in `AGENTS.md`
+- Permissive `Apache-2.0` license with an explicit patent grant

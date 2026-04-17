@@ -69,20 +69,25 @@ pub fn resolved_settings_path(override_path: Option<&Path>) -> Result<PathBuf> {
     }
 }
 
-pub fn example_settings_toml() -> &'static str {
+pub fn example_settings_toml() -> String {
     r#"# kindle-to-markdown settings
 #
-# Remove the leading `#` to enable a setting.
+# Generated with the current default values.
+# Edit the values you want to change.
+#
+# Leave `output`, `sort-by`, and `copy-raw` commented out to keep the built-in behavior.
 
-# discover = true
+discover = false
+layout = "single"
+dedupe = false
+stats = "text"
+no-stats = false
+
 # output = "clippings"
-# layout = "by-book"
 # sort-by = "location"
-# dedupe = true
-# stats = "text"
 # copy-raw = true
-# no-stats = false
 "#
+    .to_string()
 }
 
 pub fn init_settings_file(path: &Path) -> Result<()> {
@@ -187,13 +192,17 @@ no-stats = true
     }
 
     #[test]
-    fn example_settings_template_is_commented() {
+    fn example_settings_template_contains_active_defaults() {
         let template = example_settings_toml();
 
-        assert!(template.contains("# layout = \"by-book\""));
+        assert!(template.contains("discover = false"));
+        assert!(template.contains("layout = \"single\""));
+        assert!(template.contains("dedupe = false"));
+        assert!(template.contains("stats = \"text\""));
+        assert!(template.contains("no-stats = false"));
+        assert!(template.contains("# output = \"clippings\""));
         assert!(template.contains("# sort-by = \"location\""));
-        assert!(template.contains("# dedupe = true"));
-        assert!(template.contains("# stats = \"text\""));
+        assert!(template.contains("# copy-raw = true"));
     }
 
     #[test]

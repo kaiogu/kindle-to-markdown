@@ -626,7 +626,7 @@ output = "from-explicit-config"
 }
 
 #[test]
-fn init_config_writes_commented_example_to_explicit_path() {
+fn init_config_writes_defaulted_settings_to_explicit_path() {
     let temp = tempdir().expect("temp dir should exist");
     let config_path = temp.path().join("generated").join("settings.toml");
 
@@ -644,6 +644,12 @@ fn init_config_writes_commented_example_to_explicit_path() {
     let content = fs::read_to_string(config_path).expect("settings file should be readable");
 
     assert!(stdout.contains("Wrote example settings to"));
-    assert!(content.contains("# layout = \"by-book\""));
+    assert!(content.contains("discover = false"));
+    assert!(content.contains("layout = \"single\""));
+    assert!(content.contains("dedupe = false"));
+    assert!(content.contains("stats = \"text\""));
+    assert!(content.contains("no-stats = false"));
     assert!(content.contains("# sort-by = \"location\""));
+    assert!(content.contains("# output = \"clippings\""));
+    assert!(content.contains("# copy-raw = true"));
 }

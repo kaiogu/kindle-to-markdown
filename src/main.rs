@@ -47,7 +47,7 @@ struct Cli {
     #[arg(
         long,
         default_value_t = false,
-        help = "Write a commented example settings file and exit"
+        help = "Write a settings file with defaults to the standard path, or to --config PATH if provided"
     )]
     init_config: bool,
 

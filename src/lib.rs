@@ -102,7 +102,7 @@ pub fn default_export_directory() -> PathBuf {
 
 pub fn resolve_output_target(layout: OutputLayout, output: Option<&Path>) -> OutputTarget {
     match (layout, output) {
-        (OutputLayout::SingleFile, Some(path)) if looks_like_markdown_file(path) => {
+        (OutputLayout::SingleFile, Some(path)) => {
             OutputTarget::File(path.to_path_buf())
         }
         (_, Some(path)) => OutputTarget::Directory(path.to_path_buf()),
@@ -123,12 +123,6 @@ pub fn raw_destination_for_output(input_path: &Path, output_target: &OutputTarge
             .join(raw_name),
         OutputTarget::Directory(path) => path.join(raw_name),
     }
-}
-
-fn looks_like_markdown_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
 }
 
 pub fn copy_kindle_clippings(source: Option<&Path>, destination: &Path) -> Result<PathBuf> {
@@ -1173,6 +1167,14 @@ Beta
             output,
             OutputTarget::File(PathBuf::from("notes/highlights.md"))
         );
+    }
+
+    #[test]
+    fn resolves_single_layout_file_output_even_without_markdown_extension() {
+        let output =
+            resolve_output_target(OutputLayout::SingleFile, Some(Path::new("notes.txt")));
+
+        assert_eq!(output, OutputTarget::File(PathBuf::from("notes.txt")));
     }
 
     #[test]

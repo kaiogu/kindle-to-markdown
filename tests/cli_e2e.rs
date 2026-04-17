@@ -257,6 +257,29 @@ Beta
 }
 
 #[test]
+fn writes_single_layout_output_to_non_markdown_file_path() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = write_standard_input_file(temp.path());
+    let output_path = temp.path().join("notes.txt");
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .arg("--layout")
+        .arg("single")
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+    assert!(output_path.is_file(), "output file should be written");
+    assert!(
+        !output_path.join("clippings.md").exists(),
+        "single-layout output path should not be treated as a directory"
+    );
+}
+
+#[test]
 fn merge_mode_combines_multiple_input_files() {
     let temp = tempdir().expect("temp dir should exist");
     let first = temp.path().join("first.txt");

@@ -41,7 +41,9 @@ Output:
 *Location: 1234-1237 | Added: Saturday, August 10, 2024 9:45:00 AM*
 ```
 
-## Quick Start
+## User Guide
+
+### Quick Start
 
 ```bash
 cargo run -- sample_clippings.txt
@@ -130,7 +132,7 @@ cargo build --release
 ./target/release/kindle-to-markdown "My Clippings.txt" --output highlights.md
 ```
 
-## Input Rules
+### Input Rules
 
 The CLI accepts exactly one input source:
 
@@ -146,7 +148,7 @@ To merge multiple clipping files, pass them explicitly with `--merge`:
 cargo run -- --merge first.txt second.txt
 ```
 
-## Device Discovery
+### Device Discovery
 
 `--discover` looks for `My Clippings.txt` in the common device mount locations for:
 
@@ -178,7 +180,7 @@ If `stdout` is the Markdown destination and `--copy-raw` is automatic, the raw f
 
 The tool prints per-book counts plus a top-books summary to `stderr` by default. Use `--stats totals` for only aggregate counts, `--stats json` for machine-readable output, or `--no-stats` to silence stats entirely.
 
-## Settings
+## Configuration
 
 The CLI reads optional user settings from a platform-standard config file:
 
@@ -213,7 +215,9 @@ no-stats = false
 
 CLI flags still win over settings.
 
-## Development Workflow
+## Contributor Guide
+
+### Development Workflow
 
 This repository ships with local and CI quality gates:
 
@@ -225,7 +229,7 @@ cargo test --all-targets --all-features
 uv run --with pre-commit pre-commit run --all-files
 ```
 
-## Versioning and Releases
+### Versioning and Releases
 
 This project stays on `0.x` until the CLI surface feels stable. Release automation is driven by Conventional Commits and `release-plz`:
 
@@ -245,7 +249,7 @@ feat!: rename output headings
 
 Published GitHub releases also attach prebuilt binaries for Linux, macOS, and Windows.
 
-## Project Layout
+### Project Layout
 
 ```text
 src/lib.rs      Parsing and Markdown rendering logic
@@ -255,7 +259,7 @@ sample_clippings.txt
 .pre-commit-config.yaml
 ```
 
-## Why This Repo Is Ready for Public Use
+### Why This Repo Is Ready for Public Use
 
 - Stable Rust toolchain pinned with `rustfmt` and `clippy`
 - GitHub Actions CI for format, lint, and test checks

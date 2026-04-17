@@ -1,0 +1,18 @@
+The Rust Programming Language (Steve Klabnik and Carol Nichols) - Your Highlight on page 23 | Location 234-236 | Added on Friday, August 9, 2024 12:34:56 PM
+
+Memory safety is one of Rust's main selling points. Rust prevents common programming errors like null pointer dereferences and buffer overflows at compile time.
+
+==========
+The Rust Programming Language (Steve Klabnik and Carol Nichols) - Your Note on page 45 | Location 456 | Added on Friday, August 9, 2024 1:15:30 PM
+
+This is really important for systems programming where memory management is critical.
+
+==========
+Clean Code (Robert C. Martin) - Your Highlight on Location 1234-1237 | Added on Saturday, August 10, 2024 9:45:00 AM
+
+Functions should do one thing. They should do it well. They should do it only.
+
+==========
+Clean Code (Robert C. Martin) - Your Bookmark on Location 1500 | Added on Saturday, August 10, 2024 10:00:00 AM
+
+==========

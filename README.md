@@ -59,6 +59,12 @@ Read from a connected Kindle:
 cargo run -- --discover
 ```
 
+Print the resolved settings file path:
+
+```bash
+cargo run -- --print-settings-path
+```
+
 Write one Markdown file per book:
 
 ```bash
@@ -137,6 +143,32 @@ If you pass `--copy-raw`, the raw file is copied too:
 If `stdout` is the Markdown destination and `--copy-raw` is automatic, the raw file is saved to `clippings/My Clippings.txt`.
 
 The tool prints per-book counts by default to `stderr`. Use `--no-stats` to silence the statistics summary.
+
+## Settings
+
+The CLI reads optional user settings from a platform-standard config file:
+
+- Linux/XDG: `$XDG_CONFIG_HOME/kindle-to-markdown/settings.toml` or `~/.config/kindle-to-markdown/settings.toml`
+- Windows: `%APPDATA%\\kaiogu\\kindle-to-markdown\\config\\settings.toml`
+- macOS: `~/Library/Application Support/com.kaiogu.kindle-to-markdown/settings.toml`
+
+Print the exact path for your machine with:
+
+```bash
+kindle-to-markdown --print-settings-path
+```
+
+Example `settings.toml`:
+
+```toml
+discover = true
+layout = "by-book"
+output = "clippings"
+copy-raw = true
+no-stats = false
+```
+
+CLI flags still win over settings.
 
 ## Development Workflow
 

@@ -1,3 +1,5 @@
+pub mod settings;
+
 use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
 use std::collections::BTreeSet;

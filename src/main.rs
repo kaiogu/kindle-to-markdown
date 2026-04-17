@@ -3,7 +3,9 @@ use clap::{Parser, ValueEnum};
 use kindle_to_markdown::{
     OutputLayout, OutputTarget, convert_to_markdown, copy_kindle_clippings,
     default_export_directory, find_kindle_clippings_path, parse_kindle_clippings,
-    raw_destination_for_output, render_book_stats, resolve_output_target, write_markdown_output,
+    raw_destination_for_output, render_book_stats, resolve_output_target,
+    settings::{CopyRawSetting, SettingsLayout, load_settings, settings_path},
+    write_markdown_output,
 };
 use std::fs;
 use std::io::{self, IsTerminal, Read};
@@ -19,11 +21,14 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     discover: bool,
 
+    #[arg(long, default_value_t = false)]
+    print_settings_path: bool,
+
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    #[arg(long, value_enum, default_value_t = LayoutArg::Single)]
-    layout: LayoutArg,
+    #[arg(long, value_enum)]
+    layout: Option<LayoutArg>,
 
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "__AUTO__")]
     copy_raw: Option<String>,
@@ -53,14 +58,27 @@ enum ExportDestination {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if cli.print_settings_path {
+        println!("{}", settings_path()?.display());
+        return Ok(());
+    }
+
     run(cli, io::stdin().is_terminal())
 }
 
 fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
-    let layout = map_layout(cli.layout);
-    let input_source = select_input_source(stdin_is_terminal, cli.input.as_deref(), cli.discover)?;
-    let destination = select_export_destination(layout, cli.output.as_deref(), cli.discover);
-    let raw_copy_mode = parse_raw_copy_mode(cli.copy_raw.as_deref())?;
+    let settings = load_settings()?;
+    let layout = resolve_layout(cli.layout, settings.layout);
+    let discover = cli.discover || (settings.discover.unwrap_or(false) && cli.input.is_none());
+    let no_stats = cli.no_stats || settings.no_stats.unwrap_or(false);
+    let input_source = select_input_source(stdin_is_terminal, cli.input.as_deref(), discover)?;
+    let destination = select_export_destination(
+        layout,
+        cli.output.as_deref().or(settings.output.as_deref()),
+        discover,
+    );
+    let raw_copy_mode = resolve_raw_copy_mode(cli.copy_raw.as_deref(), settings.copy_raw.as_ref())?;
 
     let (entries, raw_input_path, raw_stdin_content) = match input_source {
         InputSource::Stdin => {
@@ -130,7 +148,7 @@ fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
         }
     }
 
-    if !cli.no_stats {
+    if !no_stats {
         eprintln!("{}", render_book_stats(&entries));
     }
 
@@ -151,6 +169,21 @@ fn parse_raw_copy_mode(value: Option<&str>) -> Result<RawCopyMode> {
         Some(path) if path.trim().is_empty() => bail!("--copy-raw path cannot be empty"),
         Some(path) => Ok(RawCopyMode::Explicit(PathBuf::from(path))),
     }
+}
+
+fn resolve_raw_copy_mode(
+    cli_value: Option<&str>,
+    settings_value: Option<&CopyRawSetting>,
+) -> Result<RawCopyMode> {
+    if cli_value.is_some() {
+        return parse_raw_copy_mode(cli_value);
+    }
+
+    Ok(match settings_value {
+        Some(CopyRawSetting::Enabled(true)) => RawCopyMode::Auto,
+        Some(CopyRawSetting::Enabled(false)) | None => RawCopyMode::Disabled,
+        Some(CopyRawSetting::Path(path)) => RawCopyMode::Explicit(path.clone()),
+    })
 }
 
 fn read_stdin_to_string() -> Result<String> {
@@ -243,15 +276,32 @@ fn map_layout(layout: LayoutArg) -> OutputLayout {
     }
 }
 
+fn resolve_layout(
+    cli_layout: Option<LayoutArg>,
+    settings_layout: Option<SettingsLayout>,
+) -> OutputLayout {
+    match cli_layout {
+        Some(layout) => map_layout(layout),
+        None => match settings_layout {
+            Some(SettingsLayout::ByBook) => OutputLayout::ByBook,
+            Some(SettingsLayout::Single) | None => OutputLayout::SingleFile,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Cli, ExportDestination, InputSource, LayoutArg, RawCopyMode, map_layout,
-        parse_raw_copy_mode, raw_destination_for_destination, resolve_raw_copy_destination,
-        select_export_destination, select_input_source,
+        parse_raw_copy_mode, raw_destination_for_destination, resolve_layout,
+        resolve_raw_copy_destination, resolve_raw_copy_mode, select_export_destination,
+        select_input_source,
     };
     use clap::Parser;
-    use kindle_to_markdown::{OutputLayout, OutputTarget, default_export_directory};
+    use kindle_to_markdown::{
+        OutputLayout, OutputTarget, default_export_directory,
+        settings::{CopyRawSetting, SettingsLayout},
+    };
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -334,6 +384,14 @@ mod tests {
     }
 
     #[test]
+    fn resolves_layout_from_settings_when_cli_is_absent() {
+        assert_eq!(
+            resolve_layout(None, Some(SettingsLayout::ByBook)),
+            OutputLayout::ByBook
+        );
+    }
+
+    #[test]
     fn parses_copy_raw_flag_without_value_as_auto() {
         assert_eq!(
             parse_raw_copy_mode(Some("__AUTO__")).expect("auto copy mode should parse"),
@@ -379,12 +437,19 @@ mod tests {
         let cli = Cli::parse_from(["kindle-to-markdown", "--discover", "--layout", "by-book"]);
         assert_eq!(cli.input, None);
         assert!(cli.discover);
-        assert!(matches!(cli.layout, LayoutArg::ByBook));
+        assert!(matches!(cli.layout, Some(LayoutArg::ByBook)));
     }
 
     #[test]
     fn cli_parses_copy_raw_with_optional_path() {
         let cli = Cli::parse_from(["kindle-to-markdown", "--copy-raw=local/raw.txt"]);
         assert_eq!(cli.copy_raw, Some("local/raw.txt".to_string()));
+    }
+
+    #[test]
+    fn resolves_raw_copy_mode_from_settings_when_cli_is_absent() {
+        let mode = resolve_raw_copy_mode(None, Some(&CopyRawSetting::Enabled(true)))
+            .expect("settings raw copy should resolve");
+        assert_eq!(mode, RawCopyMode::Auto);
     }
 }

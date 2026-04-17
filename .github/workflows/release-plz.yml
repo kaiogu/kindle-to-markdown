@@ -41,7 +41,7 @@ jobs:
       pull-requests: write
     concurrency:
       group: release-plz-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: true
 
     steps:
       - *checkout

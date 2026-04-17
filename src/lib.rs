@@ -103,9 +103,7 @@ pub fn default_export_directory() -> PathBuf {
 
 pub fn resolve_output_target(layout: OutputLayout, output: Option<&Path>) -> OutputTarget {
     match (layout, output) {
-        (OutputLayout::SingleFile, Some(path)) => {
-            OutputTarget::File(path.to_path_buf())
-        }
+        (OutputLayout::SingleFile, Some(path)) => OutputTarget::File(path.to_path_buf()),
         (_, Some(path)) => OutputTarget::Directory(path.to_path_buf()),
         _ => OutputTarget::Directory(default_export_directory()),
     }
@@ -1155,7 +1153,10 @@ This should be ignored.
         let processed = process_entries(entries, Some(SortKey::Date), false);
 
         assert_eq!(processed[0].date, "Sonntag, 17. Dezember 2023 22:10:11");
-        assert_eq!(processed[1].date, "sexta-feira, 12 de julho de 2024 14:03:05");
+        assert_eq!(
+            processed[1].date,
+            "sexta-feira, 12 de julho de 2024 14:03:05"
+        );
     }
 
     #[test]
@@ -1264,8 +1265,7 @@ Beta
 
     #[test]
     fn resolves_single_layout_file_output_even_without_markdown_extension() {
-        let output =
-            resolve_output_target(OutputLayout::SingleFile, Some(Path::new("notes.txt")));
+        let output = resolve_output_target(OutputLayout::SingleFile, Some(Path::new("notes.txt")));
 
         assert_eq!(output, OutputTarget::File(PathBuf::from("notes.txt")));
     }

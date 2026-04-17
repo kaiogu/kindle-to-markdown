@@ -486,6 +486,26 @@ Second paragraph.
 }
 
 #[test]
+fn explicit_copy_raw_directory_path_fails_with_clear_error() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = write_standard_input_file(temp.path());
+    let raw_dir = temp.path().join("raw-copy");
+    fs::create_dir_all(&raw_dir).expect("raw directory should be created");
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .arg("--copy-raw")
+        .arg(&raw_dir)
+        .output()
+        .expect("binary should run");
+
+    assert!(!output.status.success(), "process unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(stderr.contains("--copy-raw PATH must be a file path"));
+}
+
+#[test]
 fn dedupe_removes_duplicate_entries_from_output_and_stats() {
     let temp = tempdir().expect("temp dir should exist");
     let input = temp.path().join("duplicates.txt");

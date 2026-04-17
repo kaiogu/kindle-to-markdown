@@ -358,7 +358,15 @@ fn resolve_raw_copy_destination(
 ) -> Result<Option<PathBuf>> {
     match mode {
         RawCopyMode::Disabled => Ok(None),
-        RawCopyMode::Explicit(path) => Ok(Some(path.clone())),
+        RawCopyMode::Explicit(path) => {
+            if path.is_dir() {
+                bail!(
+                    "--copy-raw PATH must be a file path, got existing directory {}",
+                    path.display()
+                );
+            }
+            Ok(Some(path.clone()))
+        }
         RawCopyMode::Auto => {
             let input_path = input_path.context(
                 "--copy-raw without a path requires a file path or --discover input source",
@@ -665,6 +673,23 @@ mod tests {
             error.to_string().contains(
                 "--copy-raw without a path requires a file path or --discover input source"
             )
+        );
+    }
+
+    #[test]
+    fn rejects_explicit_raw_copy_directory_paths() {
+        let temp = tempfile::tempdir().expect("temp dir should exist");
+        let error = resolve_raw_copy_destination(
+            &RawCopyMode::Explicit(temp.path().to_path_buf()),
+            Some(Path::new("My Clippings.txt")),
+            &ExportDestination::Stdout,
+        )
+        .expect_err("directory paths should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("--copy-raw PATH must be a file path")
         );
     }
 

@@ -63,8 +63,7 @@ This repository ships with local and CI quality gates:
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
-pre-commit install
-pre-commit run --all-files
+uv run --with pre-commit pre-commit run --all-files
 ```
 
 ## Project Layout

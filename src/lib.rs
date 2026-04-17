@@ -32,12 +32,7 @@ pub fn parse_kindle_clippings(content: &str) -> Result<Vec<KindleEntry>> {
         }
 
         let header = lines[0];
-        let entry_content = lines
-            .get(1..)
-            .unwrap_or(&[])
-            .join("\n")
-            .trim()
-            .to_string();
+        let entry_content = lines.get(1..).unwrap_or(&[]).join("\n").trim().to_string();
 
         if let Some(captures) = re.captures(header) {
             let entry = KindleEntry {

@@ -177,6 +177,47 @@ no-stats = false
 }
 
 #[test]
+fn stats_totals_mode_omits_per_book_lines() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = write_standard_input_file(temp.path());
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .arg("--stats")
+        .arg("totals")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(stderr.contains("Statistics: 2 entries across 1 books"));
+    assert!(!stderr.contains("Top books by entries:"));
+    assert!(!stderr.contains("- The Rust Programming Language"));
+}
+
+#[test]
+fn stats_json_mode_writes_json_to_stderr() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = write_standard_input_file(temp.path());
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .arg("--stats")
+        .arg("json")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(stderr.contains("\"totals\""));
+    assert!(stderr.contains("\"books\""));
+    assert!(stderr.contains("\"top_books\""));
+    assert!(stderr.contains("\"entries\": 2"));
+}
+
+#[test]
 fn writes_one_markdown_file_per_book_to_output_directory() {
     let temp = tempdir().expect("temp dir should exist");
     let input = temp.path().join("multi-book.txt");

@@ -16,6 +16,7 @@ pub struct AppSettings {
     pub layout: Option<SettingsLayout>,
     pub sort_by: Option<SettingsSort>,
     pub dedupe: Option<bool>,
+    pub stats: Option<SettingsStats>,
     pub copy_raw: Option<CopyRawSetting>,
     pub no_stats: Option<bool>,
 }
@@ -33,6 +34,14 @@ pub enum SettingsSort {
     Book,
     Date,
     Location,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SettingsStats {
+    Text,
+    Totals,
+    Json,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -70,6 +79,7 @@ pub fn example_settings_toml() -> &'static str {
 # layout = "by-book"
 # sort-by = "location"
 # dedupe = true
+# stats = "text"
 # copy-raw = true
 # no-stats = false
 "#
@@ -106,8 +116,8 @@ pub fn load_settings_from_path(path: &Path) -> Result<AppSettings> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSettings, CopyRawSetting, SettingsLayout, SettingsSort, example_settings_toml,
-        init_settings_file, load_settings_from_path, resolved_settings_path,
+        AppSettings, CopyRawSetting, SettingsLayout, SettingsSort, SettingsStats,
+        example_settings_toml, init_settings_file, load_settings_from_path, resolved_settings_path,
     };
     use std::fs;
     use std::path::Path;
@@ -134,6 +144,7 @@ output = "notes"
 layout = "by-book"
 sort-by = "location"
 dedupe = true
+stats = "json"
 copy-raw = "raw/input.txt"
 no-stats = true
 "#,
@@ -147,6 +158,7 @@ no-stats = true
         assert_eq!(settings.layout, Some(SettingsLayout::ByBook));
         assert_eq!(settings.sort_by, Some(SettingsSort::Location));
         assert_eq!(settings.dedupe, Some(true));
+        assert_eq!(settings.stats, Some(SettingsStats::Json));
         assert_eq!(
             settings.copy_raw,
             Some(CopyRawSetting::Path("raw/input.txt".into()))
@@ -181,6 +193,7 @@ no-stats = true
         assert!(template.contains("# layout = \"by-book\""));
         assert!(template.contains("# sort-by = \"location\""));
         assert!(template.contains("# dedupe = true"));
+        assert!(template.contains("# stats = \"text\""));
     }
 
     #[test]

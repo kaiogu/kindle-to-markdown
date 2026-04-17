@@ -2,6 +2,7 @@ pub mod settings;
 
 use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
+use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::env;
@@ -39,13 +40,20 @@ pub enum SortKey {
     Location,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatsFormat {
+    Text,
+    Totals,
+    Json,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputTarget {
     File(PathBuf),
     Directory(PathBuf),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BookStats {
     pub title: String,
     pub author: String,
@@ -53,6 +61,23 @@ pub struct BookStats {
     pub notes: usize,
     pub bookmarks: usize,
     pub other: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StatsTotals {
+    pub entries: usize,
+    pub books: usize,
+    pub highlights: usize,
+    pub notes: usize,
+    pub bookmarks: usize,
+    pub other: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StatsReport {
+    pub totals: StatsTotals,
+    pub books: Vec<BookStats>,
+    pub top_books: Vec<BookStats>,
 }
 
 pub fn detect_host_platform() -> HostPlatform {
@@ -508,30 +533,90 @@ pub fn collect_book_stats(entries: &[KindleEntry]) -> Vec<BookStats> {
 }
 
 pub fn render_book_stats(entries: &[KindleEntry]) -> String {
-    let book_stats = collect_book_stats(entries);
-    let highlights: usize = book_stats.iter().map(|book| book.highlights).sum();
-    let notes: usize = book_stats.iter().map(|book| book.notes).sum();
-    let bookmarks: usize = book_stats.iter().map(|book| book.bookmarks).sum();
-    let other: usize = book_stats.iter().map(|book| book.other).sum();
+    render_book_stats_with_format(entries, StatsFormat::Text)
+}
 
-    let mut output = format!(
-        "Statistics: {} entries across {} books (highlights: {}, notes: {}, bookmarks: {}, other: {})\n",
-        entries.len(),
-        book_stats.len(),
-        highlights,
-        notes,
-        bookmarks,
-        other
-    );
+pub fn render_book_stats_with_format(entries: &[KindleEntry], format: StatsFormat) -> String {
+    let report = build_stats_report(entries);
 
-    for book in book_stats {
+    match format {
+        StatsFormat::Text => render_text_stats(&report),
+        StatsFormat::Totals => render_totals_stats(&report.totals),
+        StatsFormat::Json => {
+            serde_json::to_string_pretty(&report).expect("stats report should serialize")
+        }
+    }
+}
+
+pub fn build_stats_report(entries: &[KindleEntry]) -> StatsReport {
+    let books = collect_book_stats(entries);
+    let totals = StatsTotals {
+        entries: entries.len(),
+        books: books.len(),
+        highlights: books.iter().map(|book| book.highlights).sum(),
+        notes: books.iter().map(|book| book.notes).sum(),
+        bookmarks: books.iter().map(|book| book.bookmarks).sum(),
+        other: books.iter().map(|book| book.other).sum(),
+    };
+
+    StatsReport {
+        totals,
+        top_books: top_books_by_entries(&books, 3),
+        books,
+    }
+}
+
+fn render_totals_stats(totals: &StatsTotals) -> String {
+    format!(
+        "Statistics: {} entries across {} books (highlights: {}, notes: {}, bookmarks: {}, other: {})",
+        totals.entries,
+        totals.books,
+        totals.highlights,
+        totals.notes,
+        totals.bookmarks,
+        totals.other
+    )
+}
+
+fn render_text_stats(report: &StatsReport) -> String {
+    let mut output = format!("{}\n", render_totals_stats(&report.totals));
+
+    for book in &report.books {
         output.push_str(&format!(
             "- {} by {}: highlights {}, notes {}, bookmarks {}, other {}\n",
             book.title, book.author, book.highlights, book.notes, book.bookmarks, book.other
         ));
     }
 
+    if !report.top_books.is_empty() {
+        output.push_str("Top books by entries:\n");
+        for book in &report.top_books {
+            output.push_str(&format!(
+                "- {} by {}: {} entries\n",
+                book.title,
+                book.author,
+                total_book_entries(book)
+            ));
+        }
+    }
+
     output.trim_end().to_string()
+}
+
+fn top_books_by_entries(book_stats: &[BookStats], limit: usize) -> Vec<BookStats> {
+    let mut books = book_stats.to_vec();
+    books.sort_by(|left, right| {
+        total_book_entries(right)
+            .cmp(&total_book_entries(left))
+            .then_with(|| normalize_text(&left.title).cmp(&normalize_text(&right.title)))
+            .then_with(|| normalize_text(&left.author).cmp(&normalize_text(&right.author)))
+    });
+    books.truncate(limit);
+    books
+}
+
+fn total_book_entries(book: &BookStats) -> usize {
+    book.highlights + book.notes + book.bookmarks + book.other
 }
 
 pub fn write_markdown_output(
@@ -702,12 +787,13 @@ fn unique_book_slug(title: &str, author: &str, used_slugs: &mut HashMap<String, 
 #[cfg(test)]
 mod tests {
     use super::{
-        BookStats, HostPlatform, KindleEntry, OutputLayout, OutputTarget, SortKey,
+        BookStats, HostPlatform, KindleEntry, OutputLayout, OutputTarget, SortKey, StatsFormat,
         clippings_paths_for_device_root, collect_book_stats, convert_to_markdown,
         copy_kindle_clippings, default_export_directory, default_pull_destination,
         device_roots_for_platform, find_kindle_clippings_path_from_roots, parse_kindle_clippings,
         parse_title_and_author, process_entries, raw_destination_for_output, render_book_stats,
-        resolve_output_target, slugify_book_title, write_markdown_output,
+        render_book_stats_with_format, resolve_output_target, slugify_book_title,
+        write_markdown_output,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1348,5 +1434,26 @@ Gamma
             "- The Sirens of Titan by Kurt Vonnegut: highlights 1, notes 0, bookmarks 0, other 0"
         ));
         assert!(rendered.contains("- The Conscious Mind (Philosophy of Mind) by David J. Chalmers: highlights 0, notes 1, bookmarks 0, other 0"));
+        assert!(rendered.contains("Top books by entries:"));
+    }
+
+    #[test]
+    fn renders_totals_only_stats() {
+        let entries = parse_kindle_clippings(TWO_LINE_KINDLE_INPUT).expect("input should parse");
+        let rendered = render_book_stats_with_format(&entries, StatsFormat::Totals);
+
+        assert!(rendered.contains("Statistics: 2 entries across 2 books"));
+        assert!(!rendered.contains("Top books by entries:"));
+        assert!(!rendered.contains("The Sirens of Titan by Kurt Vonnegut"));
+    }
+
+    #[test]
+    fn renders_json_stats() {
+        let entries = parse_kindle_clippings(TWO_LINE_KINDLE_INPUT).expect("input should parse");
+        let rendered = render_book_stats_with_format(&entries, StatsFormat::Json);
+
+        assert!(rendered.contains("\"totals\""));
+        assert!(rendered.contains("\"top_books\""));
+        assert!(rendered.contains("\"title\": \"The Sirens of Titan\""));
     }
 }

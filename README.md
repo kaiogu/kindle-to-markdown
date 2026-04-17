@@ -116,6 +116,13 @@ Suppress the default per-book statistics output:
 cargo run -- sample_clippings.txt --no-stats
 ```
 
+Switch the stats output format:
+
+```bash
+cargo run -- sample_clippings.txt --stats totals
+cargo run -- sample_clippings.txt --stats json
+```
+
 Build a release binary:
 
 ```bash
@@ -163,7 +170,7 @@ If you pass `--copy-raw`, the raw file is copied too:
 
 If `stdout` is the Markdown destination and `--copy-raw` is automatic, the raw file is saved to `clippings/My Clippings.txt`.
 
-The tool prints per-book counts by default to `stderr`. Use `--no-stats` to silence the statistics summary.
+The tool prints per-book counts plus a top-books summary to `stderr` by default. Use `--stats totals` for only aggregate counts, `--stats json` for machine-readable output, or `--no-stats` to silence stats entirely.
 
 ## Settings
 
@@ -192,6 +199,7 @@ discover = true
 layout = "by-book"
 sort-by = "location"
 dedupe = true
+stats = "text"
 output = "clippings"
 copy-raw = true
 no-stats = false

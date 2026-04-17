@@ -1,12 +1,12 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgAction, Parser, ValueEnum};
 use kindle_to_markdown::{
-    OutputLayout, OutputTarget, SortKey, convert_to_markdown, copy_kindle_clippings,
+    OutputLayout, OutputTarget, SortKey, StatsFormat, convert_to_markdown, copy_kindle_clippings,
     default_export_directory, find_kindle_clippings_path, parse_kindle_clippings, process_entries,
-    raw_destination_for_output, render_book_stats, resolve_output_target,
+    raw_destination_for_output, render_book_stats_with_format, resolve_output_target,
     settings::{
-        CopyRawSetting, SettingsLayout, SettingsSort, init_settings_file, load_settings_from_path,
-        resolved_settings_path,
+        CopyRawSetting, SettingsLayout, SettingsSort, SettingsStats, init_settings_file,
+        load_settings_from_path, resolved_settings_path,
     },
     write_markdown_output,
 };
@@ -48,6 +48,9 @@ struct Cli {
     #[arg(long, action = ArgAction::SetTrue, overrides_with = "dedupe")]
     no_dedupe: bool,
 
+    #[arg(long, value_enum)]
+    stats: Option<StatsArg>,
+
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "__AUTO__")]
     copy_raw: Option<String>,
 
@@ -66,6 +69,13 @@ enum SortArg {
     Book,
     Date,
     Location,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum StatsArg {
+    Text,
+    Totals,
+    Json,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +114,7 @@ fn run(cli: Cli, stdin_is_terminal: bool, settings_path: &Path) -> Result<()> {
     let layout = resolve_layout(cli.layout, settings.layout);
     let sort_key = resolve_sort_key(cli.sort_by, settings.sort_by);
     let dedupe = resolve_dedupe(cli.dedupe, cli.no_dedupe, settings.dedupe);
+    let stats_format = resolve_stats_format(cli.stats, settings.stats);
     let discover = cli.discover || (settings.discover.unwrap_or(false) && cli.input.is_none());
     let no_stats = cli.no_stats || settings.no_stats.unwrap_or(false);
     let input_source = select_input_source(stdin_is_terminal, cli.input.as_deref(), discover)?;
@@ -184,7 +195,7 @@ fn run(cli: Cli, stdin_is_terminal: bool, settings_path: &Path) -> Result<()> {
     }
 
     if !no_stats {
-        eprintln!("{}", render_book_stats(&entries));
+        eprintln!("{}", render_book_stats_with_format(&entries, stats_format));
     }
 
     Ok(())
@@ -319,6 +330,14 @@ fn map_sort(sort: SortArg) -> SortKey {
     }
 }
 
+fn map_stats_format(stats: StatsArg) -> StatsFormat {
+    match stats {
+        StatsArg::Text => StatsFormat::Text,
+        StatsArg::Totals => StatsFormat::Totals,
+        StatsArg::Json => StatsFormat::Json,
+    }
+}
+
 fn resolve_layout(
     cli_layout: Option<LayoutArg>,
     settings_layout: Option<SettingsLayout>,
@@ -356,18 +375,32 @@ fn resolve_dedupe(cli_dedupe: bool, cli_no_dedupe: bool, settings_dedupe: Option
     }
 }
 
+fn resolve_stats_format(
+    cli_stats: Option<StatsArg>,
+    settings_stats: Option<SettingsStats>,
+) -> StatsFormat {
+    match cli_stats {
+        Some(stats) => map_stats_format(stats),
+        None => match settings_stats {
+            Some(SettingsStats::Totals) => StatsFormat::Totals,
+            Some(SettingsStats::Json) => StatsFormat::Json,
+            Some(SettingsStats::Text) | None => StatsFormat::Text,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, ExportDestination, InputSource, LayoutArg, RawCopyMode, SortArg, map_layout, map_sort,
-        parse_raw_copy_mode, raw_destination_for_destination, resolve_dedupe, resolve_layout,
-        resolve_raw_copy_destination, resolve_raw_copy_mode, resolve_sort_key,
-        select_export_destination, select_input_source,
+        Cli, ExportDestination, InputSource, LayoutArg, RawCopyMode, SortArg, StatsArg, map_layout,
+        map_sort, map_stats_format, parse_raw_copy_mode, raw_destination_for_destination,
+        resolve_dedupe, resolve_layout, resolve_raw_copy_destination, resolve_raw_copy_mode,
+        resolve_sort_key, resolve_stats_format, select_export_destination, select_input_source,
     };
     use clap::Parser;
     use kindle_to_markdown::{
-        OutputLayout, OutputTarget, SortKey, default_export_directory,
-        settings::{CopyRawSetting, SettingsLayout, SettingsSort},
+        OutputLayout, OutputTarget, SortKey, StatsFormat, default_export_directory,
+        settings::{CopyRawSetting, SettingsLayout, SettingsSort, SettingsStats},
     };
     use std::path::{Path, PathBuf};
 
@@ -458,6 +491,13 @@ mod tests {
     }
 
     #[test]
+    fn stats_mapping_matches_library_stats_formats() {
+        assert_eq!(map_stats_format(StatsArg::Text), StatsFormat::Text);
+        assert_eq!(map_stats_format(StatsArg::Totals), StatsFormat::Totals);
+        assert_eq!(map_stats_format(StatsArg::Json), StatsFormat::Json);
+    }
+
+    #[test]
     fn resolves_layout_from_settings_when_cli_is_absent() {
         assert_eq!(
             resolve_layout(None, Some(SettingsLayout::ByBook)),
@@ -479,6 +519,14 @@ mod tests {
         assert!(!resolve_dedupe(false, true, Some(true)));
         assert!(resolve_dedupe(false, false, Some(true)));
         assert!(!resolve_dedupe(false, false, None));
+    }
+
+    #[test]
+    fn resolves_stats_format_from_settings_when_cli_is_absent() {
+        assert_eq!(
+            resolve_stats_format(None, Some(SettingsStats::Json)),
+            StatsFormat::Json
+        );
     }
 
     #[test]
@@ -532,12 +580,15 @@ mod tests {
             "--sort-by",
             "location",
             "--dedupe",
+            "--stats",
+            "totals",
         ]);
         assert_eq!(cli.input, None);
         assert!(cli.discover);
         assert!(matches!(cli.layout, Some(LayoutArg::ByBook)));
         assert!(matches!(cli.sort_by, Some(SortArg::Location)));
         assert!(cli.dedupe);
+        assert!(matches!(cli.stats, Some(StatsArg::Totals)));
     }
 
     #[test]

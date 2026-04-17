@@ -168,7 +168,7 @@ pub fn find_kindle_clippings_path() -> Result<PathBuf> {
     let roots = device_roots_for_platform(detect_host_platform(), env::var_os("USER"));
     find_kindle_clippings_path_from_roots(&roots).ok_or_else(|| {
         anyhow!(
-            "could not find My Clippings.txt on a connected Kindle. Try `pull --source /path/to/My Clippings.txt` if auto-detection misses your device."
+            "could not find My Clippings.txt on a connected Kindle. Pass the file path explicitly, or ensure the device mount is visible to this environment before retrying --discover."
         )
     })
 }

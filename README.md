@@ -159,6 +159,15 @@ cargo run -- --merge first.txt second.txt
 
 It checks both the device root and `documents/My Clippings.txt`.
 
+If `--discover` fails on WSL, make sure the Windows drive is mounted and visible under `/mnt/<drive-letter>`. In practice that usually means:
+
+```bash
+ls /mnt
+ls /mnt/e
+```
+
+If the Kindle drive is missing there, enable or repair WSL automounting in `/etc/wsl.conf`, then restart WSL before retrying `--discover`.
+
 Defaults:
 
 - positional file or `stdin`, `single` layout, no `--output`: write Markdown to `stdout`

@@ -497,7 +497,8 @@ pub fn convert_to_markdown(entries: &[KindleEntry]) -> String {
 
         match entry.entry_type.as_str() {
             "Highlight" => {
-                markdown.push_str(&format!("> {}\n\n", entry.content));
+                markdown.push_str(&render_blockquote(&entry.content));
+                markdown.push_str("\n\n");
                 markdown.push_str(&format!(
                     "*Location: {} | Added: {}*\n\n",
                     entry.location, entry.date
@@ -519,6 +520,29 @@ pub fn convert_to_markdown(entries: &[KindleEntry]) -> String {
     }
 
     markdown
+}
+
+fn render_blockquote(content: &str) -> String {
+    let mut rendered = String::new();
+
+    for (index, line) in content.lines().enumerate() {
+        if index > 0 {
+            rendered.push('\n');
+        }
+
+        if line.is_empty() {
+            rendered.push('>');
+        } else {
+            rendered.push_str("> ");
+            rendered.push_str(line);
+        }
+    }
+
+    if rendered.is_empty() {
+        rendered.push('>');
+    }
+
+    rendered
 }
 
 pub fn collect_book_stats(entries: &[KindleEntry]) -> Vec<BookStats> {
@@ -1158,6 +1182,22 @@ This should be ignored.
         assert!(
             markdown.contains("*Location: 234-236 | Added: Friday, August 9, 2024 12:34:56 PM*")
         );
+    }
+
+    #[test]
+    fn renders_multiline_highlights_as_blockquotes_on_every_line() {
+        let entries = vec![KindleEntry {
+            title: "Book".to_string(),
+            author: "Author".to_string(),
+            entry_type: "Highlight".to_string(),
+            location: "1-2".to_string(),
+            date: "Monday".to_string(),
+            content: "First paragraph.\nSecond paragraph.".to_string(),
+        }];
+
+        let markdown = convert_to_markdown(&entries);
+
+        assert!(markdown.contains("> First paragraph.\n> Second paragraph."));
     }
 
     #[test]

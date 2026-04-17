@@ -458,6 +458,34 @@ Other
 }
 
 #[test]
+fn multiline_highlights_remain_blockquoted_in_cli_output() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = temp.path().join("multiline.txt");
+
+    fs::write(
+        &input,
+        r#"Book One (Author A) - Your Highlight on Location 1-2 | Added on Monday
+
+First paragraph.
+Second paragraph.
+
+==========
+"#,
+    )
+    .expect("test input should be written");
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    assert!(stdout.contains("> First paragraph.\n> Second paragraph."));
+}
+
+#[test]
 fn dedupe_removes_duplicate_entries_from_output_and_stats() {
     let temp = tempdir().expect("temp dir should exist");
     let input = temp.path().join("duplicates.txt");

@@ -257,6 +257,92 @@ Beta
 }
 
 #[test]
+fn merge_mode_combines_multiple_input_files() {
+    let temp = tempdir().expect("temp dir should exist");
+    let first = temp.path().join("first.txt");
+    let second = temp.path().join("second.txt");
+
+    fs::write(
+        &first,
+        r#"Book One (Author A) - Your Highlight on Location 1 | Added on Monday
+
+Alpha
+
+==========
+"#,
+    )
+    .expect("first input should be written");
+    fs::write(
+        &second,
+        r#"Book Two (Author B) - Your Note on Location 2 | Added on Tuesday
+
+Beta
+
+==========
+"#,
+    )
+    .expect("second input should be written");
+
+    let output = Command::new(cli_binary())
+        .arg("--merge")
+        .arg(&first)
+        .arg(&second)
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+
+    assert!(stdout.contains("# Book One by Author A"));
+    assert!(stdout.contains("# Book Two by Author B"));
+    assert!(stderr.contains("Statistics: 2 entries across 2 books"));
+}
+
+#[test]
+fn multiple_inputs_require_explicit_merge_mode() {
+    let temp = tempdir().expect("temp dir should exist");
+    let first = temp.path().join("first.txt");
+    let second = temp.path().join("second.txt");
+    fs::write(&first, standard_clippings_input()).expect("first input should be written");
+    fs::write(&second, standard_clippings_input()).expect("second input should be written");
+
+    let output = Command::new(cli_binary())
+        .arg(&first)
+        .arg(&second)
+        .output()
+        .expect("binary should run");
+
+    assert!(!output.status.success(), "process unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(stderr.contains("multiple input files require --merge"));
+}
+
+#[test]
+fn merge_mode_rejects_copy_raw() {
+    let temp = tempdir().expect("temp dir should exist");
+    let first = temp.path().join("first.txt");
+    let second = temp.path().join("second.txt");
+    fs::write(&first, standard_clippings_input()).expect("first input should be written");
+    fs::write(&second, standard_clippings_input()).expect("second input should be written");
+
+    let output = Command::new(cli_binary())
+        .arg("--merge")
+        .arg(&first)
+        .arg(&second)
+        .arg("--copy-raw=raw.txt")
+        .output()
+        .expect("binary should run");
+
+    assert!(!output.status.success(), "process unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+    assert!(stderr.contains("--copy-raw is not supported with --merge"));
+}
+
+#[test]
 fn sort_by_location_reorders_entries_within_each_book() {
     let temp = tempdir().expect("temp dir should exist");
     let input = temp.path().join("unsorted.txt");

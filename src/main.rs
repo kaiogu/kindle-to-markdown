@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 #[command(about = "Convert Kindle highlights and notes from TXT to Markdown format")]
 struct Cli {
     #[arg(value_name = "INPUT")]
-    input: Option<PathBuf>,
+    input: Vec<PathBuf>,
 
     #[arg(long, default_value_t = false)]
     discover: bool,
@@ -32,6 +32,9 @@ struct Cli {
 
     #[arg(long, default_value_t = false)]
     init_config: bool,
+
+    #[arg(long, default_value_t = false)]
+    merge: bool,
 
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -82,6 +85,7 @@ enum StatsArg {
 enum InputSource {
     Stdin,
     File(PathBuf),
+    Files(Vec<PathBuf>),
     Discover,
 }
 
@@ -115,9 +119,9 @@ fn run(cli: Cli, stdin_is_terminal: bool, settings_path: &Path) -> Result<()> {
     let sort_key = resolve_sort_key(cli.sort_by, settings.sort_by);
     let dedupe = resolve_dedupe(cli.dedupe, cli.no_dedupe, settings.dedupe);
     let stats_format = resolve_stats_format(cli.stats, settings.stats);
-    let discover = cli.discover || (settings.discover.unwrap_or(false) && cli.input.is_none());
+    let discover = cli.discover || (settings.discover.unwrap_or(false) && cli.input.is_empty());
     let no_stats = cli.no_stats || settings.no_stats.unwrap_or(false);
-    let input_source = select_input_source(stdin_is_terminal, cli.input.as_deref(), discover)?;
+    let input_source = select_input_source(stdin_is_terminal, &cli.input, discover, cli.merge)?;
     let destination = select_export_destination(
         layout,
         cli.output.as_deref().or(settings.output.as_deref()),
@@ -136,6 +140,22 @@ fn run(cli: Cli, stdin_is_terminal: bool, settings_path: &Path) -> Result<()> {
                 format!("failed to read clippings input from {}", path.display())
             })?;
             (parse_kindle_clippings(&input)?, Some(path), None)
+        }
+        InputSource::Files(paths) => {
+            if raw_copy_mode != RawCopyMode::Disabled {
+                bail!(
+                    "--copy-raw is not supported with --merge; merge inputs first, then copy raw files manually"
+                );
+            }
+
+            let mut merged = Vec::new();
+            for path in &paths {
+                let input = fs::read_to_string(path).with_context(|| {
+                    format!("failed to read clippings input from {}", path.display())
+                })?;
+                merged.extend(parse_kindle_clippings(&input)?);
+            }
+            (merged, None, None)
         }
         InputSource::Discover => {
             let path = find_kindle_clippings_path()?;
@@ -242,15 +262,22 @@ fn read_stdin_to_string() -> Result<String> {
 
 fn select_input_source(
     stdin_is_terminal: bool,
-    input: Option<&Path>,
+    input: &[PathBuf],
     discover: bool,
+    merge: bool,
 ) -> Result<InputSource> {
-    if input.is_some() && discover {
+    if !input.is_empty() && discover {
         bail!("cannot use an input file with --discover");
     }
 
-    if let Some(path) = input {
-        Ok(InputSource::File(path.to_path_buf()))
+    if input.len() > 1 && !merge {
+        bail!("multiple input files require --merge");
+    }
+
+    if let [path] = input {
+        Ok(InputSource::File(path.clone()))
+    } else if !input.is_empty() {
+        Ok(InputSource::Files(input.to_vec()))
     } else if discover {
         Ok(InputSource::Discover)
     } else if !stdin_is_terminal {
@@ -406,38 +433,73 @@ mod tests {
 
     #[test]
     fn prefers_stdin_when_present() {
-        let input = select_input_source(false, None, false).expect("stdin should be selected");
+        let input =
+            select_input_source(false, &[], false, false).expect("stdin should be selected");
         assert_eq!(input, InputSource::Stdin);
     }
 
     #[test]
     fn uses_positional_input_when_given() {
-        let input = select_input_source(true, Some(Path::new("my-clippings.txt")), false)
+        let input = select_input_source(true, &[PathBuf::from("my-clippings.txt")], false, false)
             .expect("file should be selected");
         assert_eq!(input, InputSource::File(PathBuf::from("my-clippings.txt")));
     }
 
     #[test]
     fn uses_discover_only_when_requested() {
-        let input = select_input_source(true, None, true).expect("discover should be selected");
+        let input =
+            select_input_source(true, &[], true, false).expect("discover should be selected");
         assert_eq!(input, InputSource::Discover);
     }
 
     #[test]
     fn explicit_file_wins_over_implicit_stdin() {
-        let input = select_input_source(false, Some(Path::new("my-clippings.txt")), false)
+        let input = select_input_source(false, &[PathBuf::from("my-clippings.txt")], false, false)
             .expect("file should win over implicit stdin");
         assert_eq!(input, InputSource::File(PathBuf::from("my-clippings.txt")));
     }
 
     #[test]
     fn rejects_file_input_with_discover() {
-        let error = select_input_source(true, Some(Path::new("my-clippings.txt")), true)
+        let error = select_input_source(true, &[PathBuf::from("my-clippings.txt")], true, false)
             .expect_err("file and discover should conflict");
         assert!(
             error
                 .to_string()
                 .contains("cannot use an input file with --discover")
+        );
+    }
+
+    #[test]
+    fn rejects_multiple_files_without_merge() {
+        let error = select_input_source(
+            true,
+            &[PathBuf::from("one.txt"), PathBuf::from("two.txt")],
+            false,
+            false,
+        )
+        .expect_err("multiple files without merge should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("multiple input files require --merge")
+        );
+    }
+
+    #[test]
+    fn accepts_multiple_files_with_merge() {
+        let input = select_input_source(
+            true,
+            &[PathBuf::from("one.txt"), PathBuf::from("two.txt")],
+            false,
+            true,
+        )
+        .expect("multiple files with merge should work");
+
+        assert_eq!(
+            input,
+            InputSource::Files(vec![PathBuf::from("one.txt"), PathBuf::from("two.txt")])
         );
     }
 
@@ -575,6 +637,7 @@ mod tests {
         let cli = Cli::parse_from([
             "kindle-to-markdown",
             "--discover",
+            "--merge",
             "--layout",
             "by-book",
             "--sort-by",
@@ -583,8 +646,9 @@ mod tests {
             "--stats",
             "totals",
         ]);
-        assert_eq!(cli.input, None);
+        assert!(cli.input.is_empty());
         assert!(cli.discover);
+        assert!(cli.merge);
         assert!(matches!(cli.layout, Some(LayoutArg::ByBook)));
         assert!(matches!(cli.sort_by, Some(SortArg::Location)));
         assert!(cli.dedupe);
@@ -608,6 +672,17 @@ mod tests {
 
         assert_eq!(cli.config, Some(PathBuf::from("local/settings.toml")));
         assert!(cli.init_config);
+    }
+
+    #[test]
+    fn cli_parses_multiple_inputs_for_merge() {
+        let cli = Cli::parse_from(["kindle-to-markdown", "--merge", "one.txt", "two.txt"]);
+
+        assert_eq!(
+            cli.input,
+            vec![PathBuf::from("one.txt"), PathBuf::from("two.txt")]
+        );
+        assert!(cli.merge);
     }
 
     #[test]

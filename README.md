@@ -140,6 +140,12 @@ The CLI accepts exactly one input source:
 
 If more than one input source is present, it exits with an error instead of trying to merge them implicitly.
 
+To merge multiple clipping files, pass them explicitly with `--merge`:
+
+```bash
+cargo run -- --merge first.txt second.txt
+```
+
 ## Device Discovery
 
 `--discover` looks for `My Clippings.txt` in the common device mount locations for:

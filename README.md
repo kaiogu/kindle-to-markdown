@@ -278,12 +278,17 @@ For Windows testing, the normal path is:
 This repository ships with local and CI quality gates:
 
 ```bash
-uv run --with pre-commit pre-commit install --hook-type pre-commit --hook-type commit-msg
+uv run --with pre-commit pre-commit install --hook-type pre-commit --hook-type pre-push --hook-type commit-msg
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --all-features
 uv run --with pre-commit pre-commit run --all-files
 ```
+
+Hook split:
+
+- `pre-commit`: `cargo fmt --all --check`
+- `pre-push`: `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test --all-targets --all-features`
 
 ### Versioning and Releases
 

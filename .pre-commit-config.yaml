@@ -1,5 +1,6 @@
 default_install_hook_types:
   - pre-commit
+  - pre-push
   - commit-msg
 
 repos:
@@ -16,13 +17,13 @@ repos:
         entry: cargo clippy --all-targets --all-features -- -D warnings
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
       - id: cargo-test
         name: cargo test
         entry: cargo test --all-targets --all-features
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
       - id: conventional-commit
         name: conventional commit message
         entry: bash scripts/check-commit-message.sh

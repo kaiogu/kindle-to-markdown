@@ -71,6 +71,8 @@ Write one Markdown file per book:
 cargo run -- sample_clippings.txt --layout by-book
 ```
 
+Per-book exports use shortened, collision-safe filenames automatically.
+
 Sort books alphabetically or sort entries within each book:
 
 ```bash

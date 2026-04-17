@@ -593,12 +593,14 @@ fn write_markdown_files_by_book(
     }
 
     let mut written = Vec::new();
+    let mut used_slugs = HashMap::new();
     for ((title, author), book_entries) in grouped_entries {
         written.push(write_book_markdown_file(
             output_dir,
             &title,
             &author,
             &book_entries,
+            &mut used_slugs,
         )?);
     }
 
@@ -610,8 +612,9 @@ fn write_book_markdown_file(
     title: &str,
     author: &str,
     entries: &[KindleEntry],
+    used_slugs: &mut HashMap<String, usize>,
 ) -> Result<PathBuf> {
-    let file_name = format!("{}.md", slugify_book_title(title, author));
+    let file_name = format!("{}.md", unique_book_slug(title, author, used_slugs));
     let destination = output_dir.join(file_name);
     fs::write(&destination, convert_to_markdown(entries))
         .with_context(|| format!("failed to write markdown file {}", destination.display()))?;
@@ -620,12 +623,34 @@ fn write_book_markdown_file(
 }
 
 fn slugify_book_title(title: &str, author: &str) -> String {
-    let combined = format!("{} {}", title, author).to_lowercase();
-    let mut slug = String::with_capacity(combined.len());
+    const MAX_TITLE_SLUG_CHARS: usize = 56;
+    const MAX_AUTHOR_SLUG_CHARS: usize = 20;
+    const MAX_BOOK_SLUG_CHARS: usize = 80;
+
+    let title_slug = slugify_segment(title, MAX_TITLE_SLUG_CHARS);
+    let author_slug = slugify_segment(author, MAX_AUTHOR_SLUG_CHARS);
+
+    let mut slug = if title_slug.is_empty() {
+        "book".to_string()
+    } else {
+        title_slug
+    };
+
+    if !author_slug.is_empty() {
+        slug.push_str("-by-");
+        slug.push_str(&author_slug);
+    }
+
+    trim_slug_to_length(&slug, MAX_BOOK_SLUG_CHARS)
+}
+
+fn slugify_segment(value: &str, max_chars: usize) -> String {
+    let lowercase = value.to_lowercase();
+    let mut slug = String::with_capacity(lowercase.len());
     let mut last_was_separator = false;
 
-    for ch in combined.chars() {
-        let is_word = ch.is_ascii_alphanumeric();
+    for ch in lowercase.chars() {
+        let is_word = ch.is_alphanumeric();
         if is_word {
             slug.push(ch);
             last_was_separator = false;
@@ -635,11 +660,42 @@ fn slugify_book_title(title: &str, author: &str) -> String {
         }
     }
 
+    trim_slug_to_length(&slug, max_chars)
+}
+
+fn trim_slug_to_length(slug: &str, max_chars: usize) -> String {
     let trimmed = slug.trim_matches('-');
     if trimmed.is_empty() {
+        return "book".to_string();
+    }
+
+    let mut shortened = String::new();
+    for ch in trimmed.chars().take(max_chars) {
+        shortened.push(ch);
+    }
+
+    let shortened = shortened.trim_matches('-');
+    if shortened.is_empty() {
         "book".to_string()
     } else {
-        trimmed.to_string()
+        shortened.to_string()
+    }
+}
+
+fn unique_book_slug(title: &str, author: &str, used_slugs: &mut HashMap<String, usize>) -> String {
+    const MAX_BOOK_SLUG_CHARS: usize = 80;
+
+    let base = slugify_book_title(title, author);
+    let next = used_slugs.entry(base.clone()).or_insert(0);
+    *next += 1;
+
+    if *next == 1 {
+        base
+    } else {
+        let suffix = format!("-{}", next);
+        let available = MAX_BOOK_SLUG_CHARS.saturating_sub(suffix.chars().count());
+        let prefix = trim_slug_to_length(&base, available);
+        format!("{prefix}{suffix}")
     }
 }
 
@@ -651,7 +707,7 @@ mod tests {
         copy_kindle_clippings, default_export_directory, default_pull_destination,
         device_roots_for_platform, find_kindle_clippings_path_from_roots, parse_kindle_clippings,
         parse_title_and_author, process_entries, raw_destination_for_output, render_book_stats,
-        resolve_output_target, write_markdown_output,
+        resolve_output_target, slugify_book_title, write_markdown_output,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1148,13 +1204,53 @@ Beta
         .expect("per-book write should succeed");
 
         assert_eq!(written.len(), 2);
-        assert!(written.contains(&temp.path().join("book-one-author-a.md")));
-        assert!(written.contains(&temp.path().join("book-two-author-b.md")));
+        assert!(written.contains(&temp.path().join("book-one-by-author-a.md")));
+        assert!(written.contains(&temp.path().join("book-two-by-author-b.md")));
 
-        let first = fs::read_to_string(temp.path().join("book-one-author-a.md"))
+        let first = fs::read_to_string(temp.path().join("book-one-by-author-a.md"))
             .expect("book markdown should be readable");
         assert!(first.contains("# Book One by Author A"));
         assert!(!first.contains("Book Two"));
+    }
+
+    #[test]
+    fn shortens_book_slugs_and_keeps_author_context() {
+        let slug = slugify_book_title(
+            "A Very Long Book Title That Keeps Going Past Reasonable Filename Length Limits",
+            "An Author With A Surprisingly Long Name",
+        );
+
+        assert!(slug.len() <= 80);
+        assert!(slug.starts_with("a-very-long-book-title"));
+        assert!(slug.contains("-by-an-author-with-a"));
+    }
+
+    #[test]
+    fn adds_numeric_suffix_when_book_slugs_collide() {
+        let temp = tempdir().expect("temp dir should exist");
+        let input = r#"Rust / Book (Author A) - Your Highlight on Location 1 | Added on Monday
+
+Alpha
+
+==========
+Rust: Book (Author A) - Your Highlight on Location 2 | Added on Tuesday
+
+Beta
+
+==========
+"#;
+        let entries = parse_kindle_clippings(input).expect("input should parse");
+
+        let written = write_markdown_output(
+            &entries,
+            &OutputTarget::Directory(temp.path().to_path_buf()),
+            OutputLayout::ByBook,
+        )
+        .expect("per-book write should succeed");
+
+        assert_eq!(written.len(), 2);
+        assert!(written.contains(&temp.path().join("rust-book-by-author-a.md")));
+        assert!(written.contains(&temp.path().join("rust-book-by-author-a-2.md")));
     }
 
     #[test]
@@ -1186,7 +1282,7 @@ Gamma
         .expect("per-book write should succeed");
 
         assert_eq!(written.len(), 2);
-        let first = fs::read_to_string(temp.path().join("book-one-author-a.md"))
+        let first = fs::read_to_string(temp.path().join("book-one-by-author-a.md"))
             .expect("book markdown should be readable");
         assert!(first.contains("> Alpha"));
         assert!(first.contains("**Note:** Gamma"));

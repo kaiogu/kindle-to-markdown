@@ -198,8 +198,8 @@ Beta
         .expect("binary should run");
 
     assert!(output.status.success(), "process failed: {output:?}");
-    assert!(output_dir.join("book-one-author-a.md").is_file());
-    assert!(output_dir.join("book-two-author-b.md").is_file());
+    assert!(output_dir.join("book-one-by-author-a.md").is_file());
+    assert!(output_dir.join("book-two-by-author-b.md").is_file());
 
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     assert!(stdout.contains("Exported 2 entries into 2 file(s) under"));

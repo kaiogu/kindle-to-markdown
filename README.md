@@ -53,10 +53,10 @@ Export from a connected Kindle into the default `clippings/` folder:
 cargo run -- export
 ```
 
-Save the raw Kindle file too:
+Save the raw Kindle file alongside the export, keeping its original filename:
 
 ```bash
-cargo run -- export --save-raw local/my-clippings.txt
+cargo run -- export --save-raw
 ```
 
 Write one Markdown file per book:
@@ -68,7 +68,13 @@ cargo run -- export --layout by-book
 Override the input or output locations explicitly:
 
 ```bash
-cargo run -- export --input "/path/to/My Clippings.txt" --out-dir my-notes
+cargo run -- export --input "/path/to/My Clippings.txt" --output my-notes
+```
+
+Write a single Markdown file to an explicit path:
+
+```bash
+cargo run -- export --output my-notes/highlights.md --save-raw
 ```
 
 Copy only the raw Kindle file into `local/`:
@@ -101,7 +107,10 @@ The `pull` command looks for `My Clippings.txt` in the common device mount locat
 
 It checks both the device root and `documents/My Clippings.txt`, then copies the first match into `local/my-clippings.txt` by default.
 
-The `export` command uses the same discovery logic. If you do not pass `--save-raw`, it reads directly from the connected Kindle and only writes Markdown output into `clippings/`.
+The `export` command uses the same discovery logic. If you do not pass `--save-raw`, it reads directly from the connected Kindle and only writes Markdown output. If you do pass `--save-raw`, the raw file keeps its original name:
+
+- single-file export: next to the Markdown file
+- directory export: inside the output directory
 
 ## Development Workflow
 

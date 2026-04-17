@@ -29,6 +29,12 @@ pub enum OutputLayout {
     ByBook,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutputTarget {
+    File(PathBuf),
+    Directory(PathBuf),
+}
+
 pub fn detect_host_platform() -> HostPlatform {
     if cfg!(windows) {
         HostPlatform::Windows
@@ -47,6 +53,37 @@ pub fn default_pull_destination() -> PathBuf {
 
 pub fn default_export_directory() -> PathBuf {
     PathBuf::from("clippings")
+}
+
+pub fn resolve_output_target(layout: OutputLayout, output: Option<&Path>) -> OutputTarget {
+    match (layout, output) {
+        (OutputLayout::SingleFile, Some(path)) if looks_like_markdown_file(path) => {
+            OutputTarget::File(path.to_path_buf())
+        }
+        (_, Some(path)) => OutputTarget::Directory(path.to_path_buf()),
+        _ => OutputTarget::Directory(default_export_directory()),
+    }
+}
+
+pub fn raw_destination_for_output(input_path: &Path, output_target: &OutputTarget) -> PathBuf {
+    let raw_name = input_path
+        .file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("My Clippings.txt"));
+
+    match output_target {
+        OutputTarget::File(path) => path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(raw_name),
+        OutputTarget::Directory(path) => path.join(raw_name),
+    }
+}
+
+fn looks_like_markdown_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
 }
 
 pub fn copy_kindle_clippings(source: Option<&Path>, destination: &Path) -> Result<PathBuf> {
@@ -288,20 +325,29 @@ pub fn convert_to_markdown(entries: &[KindleEntry]) -> String {
 
 pub fn write_markdown_output(
     entries: &[KindleEntry],
-    output_dir: &Path,
+    output_target: &OutputTarget,
     layout: OutputLayout,
 ) -> Result<Vec<PathBuf>> {
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
-
     match layout {
-        OutputLayout::SingleFile => write_single_markdown_file(entries, output_dir),
-        OutputLayout::ByBook => write_markdown_files_by_book(entries, output_dir),
+        OutputLayout::SingleFile => write_single_markdown_file(entries, output_target),
+        OutputLayout::ByBook => write_markdown_files_by_book(entries, output_target),
     }
 }
 
-fn write_single_markdown_file(entries: &[KindleEntry], output_dir: &Path) -> Result<Vec<PathBuf>> {
-    let destination = output_dir.join("clippings.md");
+fn write_single_markdown_file(
+    entries: &[KindleEntry],
+    output_target: &OutputTarget,
+) -> Result<Vec<PathBuf>> {
+    let destination = match output_target {
+        OutputTarget::File(path) => path.clone(),
+        OutputTarget::Directory(path) => path.join("clippings.md"),
+    };
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+    }
+
     fs::write(&destination, convert_to_markdown(entries))
         .with_context(|| format!("failed to write markdown file {}", destination.display()))?;
 
@@ -310,8 +356,21 @@ fn write_single_markdown_file(entries: &[KindleEntry], output_dir: &Path) -> Res
 
 fn write_markdown_files_by_book(
     entries: &[KindleEntry],
-    output_dir: &Path,
+    output_target: &OutputTarget,
 ) -> Result<Vec<PathBuf>> {
+    let output_dir = match output_target {
+        OutputTarget::Directory(path) => path,
+        OutputTarget::File(path) => {
+            bail!(
+                "by-book layout requires a directory output, got file {}",
+                path.display()
+            );
+        }
+    };
+
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
+
     let mut written = Vec::new();
     let mut current_book = None::<(String, String)>;
     let mut current_entries = Vec::new();
@@ -387,13 +446,14 @@ fn slugify_book_title(title: &str, author: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        HostPlatform, OutputLayout, clippings_paths_for_device_root, convert_to_markdown,
-        copy_kindle_clippings, default_export_directory, default_pull_destination,
-        device_roots_for_platform, find_kindle_clippings_path_from_roots, parse_kindle_clippings,
-        parse_title_and_author, write_markdown_output,
+        HostPlatform, OutputLayout, OutputTarget, clippings_paths_for_device_root,
+        convert_to_markdown, copy_kindle_clippings, default_export_directory,
+        default_pull_destination, device_roots_for_platform, find_kindle_clippings_path_from_roots,
+        parse_kindle_clippings, parse_title_and_author, raw_destination_for_output,
+        resolve_output_target, write_markdown_output,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     const SAMPLE_INPUT: &str = r#"The Rust Programming Language (Steve Klabnik, Carol Nichols) - Your Highlight on page 23 | Location 234-236 | Added on Friday, August 9, 2024 12:34:56 PM
@@ -524,6 +584,50 @@ Beta
     }
 
     #[test]
+    fn resolves_single_layout_file_output_when_markdown_path_is_given() {
+        let output = resolve_output_target(
+            OutputLayout::SingleFile,
+            Some(Path::new("notes/highlights.md")),
+        );
+
+        assert_eq!(
+            output,
+            OutputTarget::File(PathBuf::from("notes/highlights.md"))
+        );
+    }
+
+    #[test]
+    fn resolves_by_book_output_as_directory() {
+        let output =
+            resolve_output_target(OutputLayout::ByBook, Some(Path::new("notes/highlights.md")));
+
+        assert_eq!(
+            output,
+            OutputTarget::Directory(PathBuf::from("notes/highlights.md"))
+        );
+    }
+
+    #[test]
+    fn derives_raw_destination_next_to_single_markdown_file() {
+        let destination = raw_destination_for_output(
+            Path::new("/tmp/My Clippings.txt"),
+            &OutputTarget::File(PathBuf::from("notes/highlights.md")),
+        );
+
+        assert_eq!(destination, PathBuf::from("notes/My Clippings.txt"));
+    }
+
+    #[test]
+    fn derives_raw_destination_inside_output_directory() {
+        let destination = raw_destination_for_output(
+            Path::new("/tmp/My Clippings.txt"),
+            &OutputTarget::Directory(PathBuf::from("clippings")),
+        );
+
+        assert_eq!(destination, PathBuf::from("clippings/My Clippings.txt"));
+    }
+
+    #[test]
     fn finds_first_existing_clippings_file_from_roots() {
         let temp = tempdir().expect("temp dir should exist");
         let kindle = temp.path().join("Kindle");
@@ -570,8 +674,12 @@ Beta
         let temp = tempdir().expect("temp dir should exist");
         let entries = parse_kindle_clippings(SAMPLE_INPUT).expect("sample input should parse");
 
-        let written = write_markdown_output(&entries, temp.path(), OutputLayout::SingleFile)
-            .expect("single file write should succeed");
+        let written = write_markdown_output(
+            &entries,
+            &OutputTarget::Directory(temp.path().to_path_buf()),
+            OutputLayout::SingleFile,
+        )
+        .expect("single file write should succeed");
 
         assert_eq!(written.len(), 1);
         assert_eq!(written[0], temp.path().join("clippings.md"));
@@ -593,11 +701,15 @@ Book Two (Author B) - Your Highlight on page 2 | Location 2-2 | Added on Monday,
 Beta
 
 ==========
-"#;
+        "#;
         let entries = parse_kindle_clippings(input).expect("input should parse");
 
-        let written = write_markdown_output(&entries, temp.path(), OutputLayout::ByBook)
-            .expect("per-book write should succeed");
+        let written = write_markdown_output(
+            &entries,
+            &OutputTarget::Directory(temp.path().to_path_buf()),
+            OutputLayout::ByBook,
+        )
+        .expect("per-book write should succeed");
 
         assert_eq!(written.len(), 2);
         assert!(written.contains(&temp.path().join("book-one-author-a.md")));
@@ -607,5 +719,25 @@ Beta
             .expect("book markdown should be readable");
         assert!(first.contains("# Book One by Author A"));
         assert!(!first.contains("Book Two"));
+    }
+
+    #[test]
+    fn writes_single_markdown_file_to_explicit_file_path() {
+        let temp = tempdir().expect("temp dir should exist");
+        let entries = parse_kindle_clippings(SAMPLE_INPUT).expect("sample input should parse");
+        let output = temp.path().join("exports").join("highlights.md");
+
+        let written = write_markdown_output(
+            &entries,
+            &OutputTarget::File(output.clone()),
+            OutputLayout::SingleFile,
+        )
+        .expect("single-file output path should succeed");
+
+        assert_eq!(written, vec![output.clone()]);
+        let rendered = fs::read_to_string(output).expect("explicit markdown file should exist");
+        assert!(
+            rendered.contains("# The Rust Programming Language by Steve Klabnik, Carol Nichols")
+        );
     }
 }

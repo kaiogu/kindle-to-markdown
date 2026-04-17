@@ -14,6 +14,8 @@ pub struct AppSettings {
     pub discover: Option<bool>,
     pub output: Option<PathBuf>,
     pub layout: Option<SettingsLayout>,
+    pub sort_by: Option<SettingsSort>,
+    pub dedupe: Option<bool>,
     pub copy_raw: Option<CopyRawSetting>,
     pub no_stats: Option<bool>,
 }
@@ -23,6 +25,14 @@ pub struct AppSettings {
 pub enum SettingsLayout {
     Single,
     ByBook,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SettingsSort {
+    Book,
+    Date,
+    Location,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -57,7 +67,9 @@ pub fn load_settings_from_path(path: &Path) -> Result<AppSettings> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, CopyRawSetting, SettingsLayout, load_settings_from_path};
+    use super::{
+        AppSettings, CopyRawSetting, SettingsLayout, SettingsSort, load_settings_from_path,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -80,6 +92,8 @@ mod tests {
 discover = true
 output = "notes"
 layout = "by-book"
+sort-by = "location"
+dedupe = true
 copy-raw = "raw/input.txt"
 no-stats = true
 "#,
@@ -91,6 +105,8 @@ no-stats = true
         assert_eq!(settings.discover, Some(true));
         assert_eq!(settings.output, Some("notes".into()));
         assert_eq!(settings.layout, Some(SettingsLayout::ByBook));
+        assert_eq!(settings.sort_by, Some(SettingsSort::Location));
+        assert_eq!(settings.dedupe, Some(true));
         assert_eq!(
             settings.copy_raw,
             Some(CopyRawSetting::Path("raw/input.txt".into()))

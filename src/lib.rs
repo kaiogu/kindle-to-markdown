@@ -2,7 +2,8 @@ pub mod settings;
 
 use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
-use std::collections::BTreeSet;
+use std::cmp::Ordering;
+use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,13 @@ pub enum HostPlatform {
 pub enum OutputLayout {
     SingleFile,
     ByBook,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    Book,
+    Date,
+    Location,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,6 +294,138 @@ pub fn parse_kindle_clippings(content: &str) -> Result<Vec<KindleEntry>> {
     Ok(entries)
 }
 
+pub fn process_entries(
+    entries: Vec<KindleEntry>,
+    sort_key: Option<SortKey>,
+    dedupe: bool,
+) -> Vec<KindleEntry> {
+    let mut processed = if dedupe {
+        dedupe_entries(entries)
+    } else {
+        entries
+    };
+
+    if let Some(sort_key) = sort_key {
+        sort_entries(&mut processed, sort_key);
+    }
+
+    processed
+}
+
+fn dedupe_entries(entries: Vec<KindleEntry>) -> Vec<KindleEntry> {
+    let mut seen = BTreeSet::new();
+    let mut deduped = Vec::with_capacity(entries.len());
+
+    for entry in entries {
+        let key = (
+            entry.title.clone(),
+            entry.author.clone(),
+            entry.entry_type.clone(),
+            entry.location.clone(),
+            entry.date.clone(),
+            entry.content.clone(),
+        );
+
+        if seen.insert(key) {
+            deduped.push(entry);
+        }
+    }
+
+    deduped
+}
+
+fn sort_entries(entries: &mut [KindleEntry], sort_key: SortKey) {
+    match sort_key {
+        SortKey::Book => {
+            entries.sort_by(compare_book);
+        }
+        SortKey::Date => {
+            let book_order = encounter_book_order(entries);
+            entries.sort_by(|left, right| {
+                compare_within_book(left, right, &book_order, |left, right| {
+                    left.date.cmp(&right.date)
+                })
+            });
+        }
+        SortKey::Location => {
+            let book_order = encounter_book_order(entries);
+            entries.sort_by(|left, right| {
+                compare_within_book(left, right, &book_order, compare_location)
+            });
+        }
+    }
+}
+
+fn encounter_book_order(entries: &[KindleEntry]) -> HashMap<(String, String), usize> {
+    let mut order = HashMap::new();
+
+    for entry in entries {
+        let next_index = order.len();
+        order
+            .entry((entry.title.clone(), entry.author.clone()))
+            .or_insert(next_index);
+    }
+
+    order
+}
+
+fn compare_book(left: &KindleEntry, right: &KindleEntry) -> Ordering {
+    normalize_text(&left.title)
+        .cmp(&normalize_text(&right.title))
+        .then_with(|| normalize_text(&left.author).cmp(&normalize_text(&right.author)))
+}
+
+fn compare_within_book(
+    left: &KindleEntry,
+    right: &KindleEntry,
+    book_order: &HashMap<(String, String), usize>,
+    compare_entry: impl Fn(&KindleEntry, &KindleEntry) -> Ordering,
+) -> Ordering {
+    let left_book = (left.title.clone(), left.author.clone());
+    let right_book = (right.title.clone(), right.author.clone());
+    let left_order = book_order.get(&left_book).copied().unwrap_or(usize::MAX);
+    let right_order = book_order.get(&right_book).copied().unwrap_or(usize::MAX);
+
+    left_order
+        .cmp(&right_order)
+        .then_with(|| compare_entry(left, right))
+}
+
+fn compare_location(left: &KindleEntry, right: &KindleEntry) -> Ordering {
+    location_sort_key(&left.location)
+        .cmp(&location_sort_key(&right.location))
+        .then_with(|| left.location.cmp(&right.location))
+}
+
+fn location_sort_key(location: &str) -> (Option<u32>, String) {
+    (
+        parse_location_start(location),
+        normalize_text(location).into_owned(),
+    )
+}
+
+fn parse_location_start(location: &str) -> Option<u32> {
+    let digits: String = location
+        .chars()
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
+
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+fn normalize_text(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.chars().any(|ch| ch.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(value.to_ascii_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    }
+}
+
 fn parse_title_and_author(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
     let author = trimmed.strip_suffix(')')?;
@@ -506,11 +646,12 @@ fn slugify_book_title(title: &str, author: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BookStats, HostPlatform, OutputLayout, OutputTarget, clippings_paths_for_device_root,
-        collect_book_stats, convert_to_markdown, copy_kindle_clippings, default_export_directory,
-        default_pull_destination, device_roots_for_platform, find_kindle_clippings_path_from_roots,
-        parse_kindle_clippings, parse_title_and_author, raw_destination_for_output,
-        render_book_stats, resolve_output_target, write_markdown_output,
+        BookStats, HostPlatform, KindleEntry, OutputLayout, OutputTarget, SortKey,
+        clippings_paths_for_device_root, collect_book_stats, convert_to_markdown,
+        copy_kindle_clippings, default_export_directory, default_pull_destination,
+        device_roots_for_platform, find_kindle_clippings_path_from_roots, parse_kindle_clippings,
+        parse_title_and_author, process_entries, raw_destination_for_output, render_book_stats,
+        resolve_output_target, write_markdown_output,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -665,6 +806,142 @@ This should be ignored.
         assert_eq!(entries[1].date, "sexta-feira, 12 de julho de 2024 14:03:05");
         assert_eq!(entries[1].title, "Cem Anos de Solidao");
         assert_eq!(entries[1].author, "Gabriel Garcia Marquez");
+    }
+
+    #[test]
+    fn dedupes_repeated_entries_while_keeping_first_occurrence() {
+        let entries = vec![
+            KindleEntry {
+                title: "Deep Work".to_string(),
+                author: "Cal Newport".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "10-11".to_string(),
+                date: "Monday".to_string(),
+                content: "Focus".to_string(),
+            },
+            KindleEntry {
+                title: "Deep Work".to_string(),
+                author: "Cal Newport".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "10-11".to_string(),
+                date: "Monday".to_string(),
+                content: "Focus".to_string(),
+            },
+            KindleEntry {
+                title: "Deep Work".to_string(),
+                author: "Cal Newport".to_string(),
+                entry_type: "Note".to_string(),
+                location: "12".to_string(),
+                date: "Tuesday".to_string(),
+                content: "Keep it".to_string(),
+            },
+        ];
+
+        let processed = process_entries(entries, None, true);
+
+        assert_eq!(processed.len(), 2);
+        assert_eq!(processed[0].entry_type, "Highlight");
+        assert_eq!(processed[1].entry_type, "Note");
+    }
+
+    #[test]
+    fn sorts_books_alphabetically() {
+        let entries = vec![
+            KindleEntry {
+                title: "Zoo".to_string(),
+                author: "Author Z".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "10".to_string(),
+                date: "Wednesday".to_string(),
+                content: "Last".to_string(),
+            },
+            KindleEntry {
+                title: "Alpha".to_string(),
+                author: "Author A".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "2".to_string(),
+                date: "Monday".to_string(),
+                content: "First".to_string(),
+            },
+        ];
+
+        let processed = process_entries(entries, Some(SortKey::Book), false);
+
+        assert_eq!(processed[0].title, "Alpha");
+        assert_eq!(processed[1].title, "Zoo");
+    }
+
+    #[test]
+    fn sorts_by_location_within_each_book() {
+        let entries = vec![
+            KindleEntry {
+                title: "Book One".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "20-21".to_string(),
+                date: "Wednesday".to_string(),
+                content: "Later".to_string(),
+            },
+            KindleEntry {
+                title: "Book One".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "3-4".to_string(),
+                date: "Monday".to_string(),
+                content: "Sooner".to_string(),
+            },
+            KindleEntry {
+                title: "Book Two".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "9".to_string(),
+                date: "Tuesday".to_string(),
+                content: "Other book".to_string(),
+            },
+        ];
+
+        let processed = process_entries(entries, Some(SortKey::Location), false);
+
+        assert_eq!(processed[0].title, "Book One");
+        assert_eq!(processed[0].location, "3-4");
+        assert_eq!(processed[1].location, "20-21");
+        assert_eq!(processed[2].title, "Book Two");
+    }
+
+    #[test]
+    fn sorts_by_date_within_each_book() {
+        let entries = vec![
+            KindleEntry {
+                title: "Book One".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "20-21".to_string(),
+                date: "Wednesday".to_string(),
+                content: "Later".to_string(),
+            },
+            KindleEntry {
+                title: "Book One".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Note".to_string(),
+                location: "3-4".to_string(),
+                date: "Monday".to_string(),
+                content: "Sooner".to_string(),
+            },
+            KindleEntry {
+                title: "Book Two".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "9".to_string(),
+                date: "Tuesday".to_string(),
+                content: "Other book".to_string(),
+            },
+        ];
+
+        let processed = process_entries(entries, Some(SortKey::Date), false);
+
+        assert_eq!(processed[0].date, "Monday");
+        assert_eq!(processed[1].date, "Wednesday");
+        assert_eq!(processed[2].title, "Book Two");
     }
 
     #[test]

@@ -1,10 +1,10 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 use kindle_to_markdown::{
-    OutputLayout, OutputTarget, convert_to_markdown, copy_kindle_clippings,
-    default_export_directory, find_kindle_clippings_path, parse_kindle_clippings,
+    OutputLayout, OutputTarget, SortKey, convert_to_markdown, copy_kindle_clippings,
+    default_export_directory, find_kindle_clippings_path, parse_kindle_clippings, process_entries,
     raw_destination_for_output, render_book_stats, resolve_output_target,
-    settings::{CopyRawSetting, SettingsLayout, load_settings, settings_path},
+    settings::{CopyRawSetting, SettingsLayout, SettingsSort, load_settings, settings_path},
     write_markdown_output,
 };
 use std::fs;
@@ -30,6 +30,15 @@ struct Cli {
     #[arg(long, value_enum)]
     layout: Option<LayoutArg>,
 
+    #[arg(long, value_enum)]
+    sort_by: Option<SortArg>,
+
+    #[arg(long, action = ArgAction::SetTrue, overrides_with = "no_dedupe")]
+    dedupe: bool,
+
+    #[arg(long, action = ArgAction::SetTrue, overrides_with = "dedupe")]
+    no_dedupe: bool,
+
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "__AUTO__")]
     copy_raw: Option<String>,
 
@@ -41,6 +50,13 @@ struct Cli {
 enum LayoutArg {
     Single,
     ByBook,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SortArg {
+    Book,
+    Date,
+    Location,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +86,8 @@ fn main() -> Result<()> {
 fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
     let settings = load_settings()?;
     let layout = resolve_layout(cli.layout, settings.layout);
+    let sort_key = resolve_sort_key(cli.sort_by, settings.sort_by);
+    let dedupe = resolve_dedupe(cli.dedupe, cli.no_dedupe, settings.dedupe);
     let discover = cli.discover || (settings.discover.unwrap_or(false) && cli.input.is_none());
     let no_stats = cli.no_stats || settings.no_stats.unwrap_or(false);
     let input_source = select_input_source(stdin_is_terminal, cli.input.as_deref(), discover)?;
@@ -100,6 +118,7 @@ fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
             (parse_kindle_clippings(&input)?, Some(path), None)
         }
     };
+    let entries = process_entries(entries, sort_key, dedupe);
 
     if let Some(raw_destination) =
         resolve_raw_copy_destination(&raw_copy_mode, raw_input_path.as_deref(), &destination)?
@@ -276,6 +295,14 @@ fn map_layout(layout: LayoutArg) -> OutputLayout {
     }
 }
 
+fn map_sort(sort: SortArg) -> SortKey {
+    match sort {
+        SortArg::Book => SortKey::Book,
+        SortArg::Date => SortKey::Date,
+        SortArg::Location => SortKey::Location,
+    }
+}
+
 fn resolve_layout(
     cli_layout: Option<LayoutArg>,
     settings_layout: Option<SettingsLayout>,
@@ -289,18 +316,42 @@ fn resolve_layout(
     }
 }
 
+fn resolve_sort_key(
+    cli_sort: Option<SortArg>,
+    settings_sort: Option<SettingsSort>,
+) -> Option<SortKey> {
+    match cli_sort {
+        Some(sort) => Some(map_sort(sort)),
+        None => settings_sort.map(|sort| match sort {
+            SettingsSort::Book => SortKey::Book,
+            SettingsSort::Date => SortKey::Date,
+            SettingsSort::Location => SortKey::Location,
+        }),
+    }
+}
+
+fn resolve_dedupe(cli_dedupe: bool, cli_no_dedupe: bool, settings_dedupe: Option<bool>) -> bool {
+    if cli_dedupe {
+        true
+    } else if cli_no_dedupe {
+        false
+    } else {
+        settings_dedupe.unwrap_or(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, ExportDestination, InputSource, LayoutArg, RawCopyMode, map_layout,
-        parse_raw_copy_mode, raw_destination_for_destination, resolve_layout,
-        resolve_raw_copy_destination, resolve_raw_copy_mode, select_export_destination,
-        select_input_source,
+        Cli, ExportDestination, InputSource, LayoutArg, RawCopyMode, SortArg, map_layout, map_sort,
+        parse_raw_copy_mode, raw_destination_for_destination, resolve_dedupe, resolve_layout,
+        resolve_raw_copy_destination, resolve_raw_copy_mode, resolve_sort_key,
+        select_export_destination, select_input_source,
     };
     use clap::Parser;
     use kindle_to_markdown::{
-        OutputLayout, OutputTarget, default_export_directory,
-        settings::{CopyRawSetting, SettingsLayout},
+        OutputLayout, OutputTarget, SortKey, default_export_directory,
+        settings::{CopyRawSetting, SettingsLayout, SettingsSort},
     };
     use std::path::{Path, PathBuf};
 
@@ -384,11 +435,34 @@ mod tests {
     }
 
     #[test]
+    fn sort_mapping_matches_library_sort_keys() {
+        assert_eq!(map_sort(SortArg::Book), SortKey::Book);
+        assert_eq!(map_sort(SortArg::Date), SortKey::Date);
+        assert_eq!(map_sort(SortArg::Location), SortKey::Location);
+    }
+
+    #[test]
     fn resolves_layout_from_settings_when_cli_is_absent() {
         assert_eq!(
             resolve_layout(None, Some(SettingsLayout::ByBook)),
             OutputLayout::ByBook
         );
+    }
+
+    #[test]
+    fn resolves_sort_key_from_settings_when_cli_is_absent() {
+        assert_eq!(
+            resolve_sort_key(None, Some(SettingsSort::Location)),
+            Some(SortKey::Location)
+        );
+    }
+
+    #[test]
+    fn resolves_dedupe_with_cli_override() {
+        assert!(resolve_dedupe(true, false, Some(false)));
+        assert!(!resolve_dedupe(false, true, Some(true)));
+        assert!(resolve_dedupe(false, false, Some(true)));
+        assert!(!resolve_dedupe(false, false, None));
     }
 
     #[test]
@@ -434,10 +508,20 @@ mod tests {
 
     #[test]
     fn cli_parses_positional_input_and_discover_flag() {
-        let cli = Cli::parse_from(["kindle-to-markdown", "--discover", "--layout", "by-book"]);
+        let cli = Cli::parse_from([
+            "kindle-to-markdown",
+            "--discover",
+            "--layout",
+            "by-book",
+            "--sort-by",
+            "location",
+            "--dedupe",
+        ]);
         assert_eq!(cli.input, None);
         assert!(cli.discover);
         assert!(matches!(cli.layout, Some(LayoutArg::ByBook)));
+        assert!(matches!(cli.sort_by, Some(SortArg::Location)));
+        assert!(cli.dedupe);
     }
 
     #[test]

@@ -71,6 +71,19 @@ Write one Markdown file per book:
 cargo run -- sample_clippings.txt --layout by-book
 ```
 
+Sort books alphabetically or sort entries within each book:
+
+```bash
+cargo run -- sample_clippings.txt --sort-by book
+cargo run -- sample_clippings.txt --sort-by location
+```
+
+Drop exact duplicate entries from repeated imports:
+
+```bash
+cargo run -- sample_clippings.txt --dedupe
+```
+
 Save the raw Kindle file alongside the export, keeping its original filename:
 
 ```bash
@@ -163,6 +176,8 @@ Example `settings.toml`:
 ```toml
 discover = true
 layout = "by-book"
+sort-by = "location"
+dedupe = true
 output = "clippings"
 copy-raw = true
 no-stats = false

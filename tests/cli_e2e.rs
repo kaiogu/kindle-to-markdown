@@ -204,3 +204,143 @@ Beta
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     assert!(stdout.contains("Exported 2 entries into 2 file(s) under"));
 }
+
+#[test]
+fn sort_by_location_reorders_entries_within_each_book() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = temp.path().join("unsorted.txt");
+
+    fs::write(
+        &input,
+        r#"Book One (Author A) - Your Highlight on Location 20-21 | Added on Wednesday
+
+Later
+
+==========
+Book One (Author A) - Your Highlight on Location 3-4 | Added on Monday
+
+Sooner
+
+==========
+Book Two (Author B) - Your Highlight on Location 9 | Added on Tuesday
+
+Other
+
+==========
+"#,
+    )
+    .expect("test input should be written");
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .arg("--sort-by")
+        .arg("location")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let sooner_index = stdout.find("> Sooner").expect("Sooner entry should exist");
+    let later_index = stdout.find("> Later").expect("Later entry should exist");
+    let other_book_index = stdout
+        .find("# Book Two by Author B")
+        .expect("second book should exist");
+
+    assert!(sooner_index < later_index);
+    assert!(later_index < other_book_index);
+}
+
+#[test]
+fn dedupe_removes_duplicate_entries_from_output_and_stats() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = temp.path().join("duplicates.txt");
+
+    fs::write(
+        &input,
+        r#"Deep Work (Cal Newport) - Your Highlight on Location 10-11 | Added on Monday
+
+Focus.
+
+==========
+Deep Work (Cal Newport) - Your Highlight on Location 10-11 | Added on Monday
+
+Focus.
+
+==========
+"#,
+    )
+    .expect("test input should be written");
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .arg("--dedupe")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+
+    assert_eq!(stdout.matches("> Focus.").count(), 1);
+    assert!(stderr.contains("Statistics: 1 entries across 1 books"));
+}
+
+#[test]
+fn cli_sort_and_dedupe_override_settings() {
+    let temp = tempdir().expect("temp dir should exist");
+    let config_home = temp.path().join("config-home");
+    let input = temp.path().join("settings-override.txt");
+
+    write_settings(
+        &config_home,
+        r#"
+sort-by = "book"
+dedupe = true
+"#,
+    );
+
+    fs::write(
+        &input,
+        r#"Zoo (Author Z) - Your Highlight on Location 20 | Added on Wednesday
+
+Later
+
+==========
+Zoo (Author Z) - Your Highlight on Location 20 | Added on Wednesday
+
+Later
+
+==========
+Zoo (Author Z) - Your Highlight on Location 3 | Added on Monday
+
+Sooner
+
+==========
+"#,
+    )
+    .expect("test input should be written");
+
+    let output = Command::new(cli_binary())
+        .current_dir(temp.path())
+        .env("XDG_CONFIG_HOME", &config_home)
+        .arg(&input)
+        .arg("--sort-by")
+        .arg("location")
+        .arg("--no-dedupe")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
+
+    assert_eq!(stdout.matches("> Later").count(), 2);
+    assert!(
+        stdout.find("> Sooner").expect("Sooner entry should exist")
+            < stdout.find("> Later").expect("Later entry should exist")
+    );
+    assert!(stderr.contains("Statistics: 3 entries across 1 books"));
+}

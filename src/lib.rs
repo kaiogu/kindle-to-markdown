@@ -1,6 +1,7 @@
 pub mod settings;
 
 use anyhow::{Context, Result, anyhow, bail};
+use chrono::NaiveDateTime;
 use regex::Regex;
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -363,7 +364,7 @@ fn sort_entries(entries: &mut [KindleEntry], sort_key: SortKey) {
             let book_order = encounter_book_order(entries);
             entries.sort_by(|left, right| {
                 compare_within_book(left, right, &book_order, |left, right| {
-                    left.date.cmp(&right.date)
+                    compare_date(left, right)
                 })
             });
         }
@@ -415,6 +416,31 @@ fn compare_location(left: &KindleEntry, right: &KindleEntry) -> Ordering {
     location_sort_key(&left.location)
         .cmp(&location_sort_key(&right.location))
         .then_with(|| left.location.cmp(&right.location))
+}
+
+fn compare_date(left: &KindleEntry, right: &KindleEntry) -> Ordering {
+    match (
+        parse_sortable_date(&left.date),
+        parse_sortable_date(&right.date),
+    ) {
+        (Some(left_date), Some(right_date)) => left_date
+            .cmp(&right_date)
+            .then_with(|| left.date.cmp(&right.date)),
+        _ => left.date.cmp(&right.date),
+    }
+}
+
+fn parse_sortable_date(date: &str) -> Option<NaiveDateTime> {
+    const FORMATS: &[&str] = &[
+        "%A, %B %d, %Y %I:%M:%S %p",
+        "%A, %B %-d, %Y %I:%M:%S %p",
+        "%A, %B %d, %Y %-I:%M:%S %p",
+        "%A, %B %-d, %Y %-I:%M:%S %p",
+    ];
+
+    FORMATS
+        .iter()
+        .find_map(|format| NaiveDateTime::parse_from_str(date, format).ok())
 }
 
 fn location_sort_key(location: &str) -> (Option<u32>, String) {
@@ -1053,7 +1079,7 @@ This should be ignored.
                 author: "Author".to_string(),
                 entry_type: "Highlight".to_string(),
                 location: "20-21".to_string(),
-                date: "Wednesday".to_string(),
+                date: "Friday, August 9, 2024 12:34:56 PM".to_string(),
                 content: "Later".to_string(),
             },
             KindleEntry {
@@ -1061,7 +1087,7 @@ This should be ignored.
                 author: "Author".to_string(),
                 entry_type: "Note".to_string(),
                 location: "3-4".to_string(),
-                date: "Monday".to_string(),
+                date: "Monday, January 1, 2024 10:00:00 AM".to_string(),
                 content: "Sooner".to_string(),
             },
             KindleEntry {
@@ -1069,16 +1095,43 @@ This should be ignored.
                 author: "Author".to_string(),
                 entry_type: "Highlight".to_string(),
                 location: "9".to_string(),
-                date: "Tuesday".to_string(),
+                date: "Tuesday, February 6, 2024 8:00:00 AM".to_string(),
                 content: "Other book".to_string(),
             },
         ];
 
         let processed = process_entries(entries, Some(SortKey::Date), false);
 
-        assert_eq!(processed[0].date, "Monday");
-        assert_eq!(processed[1].date, "Wednesday");
+        assert_eq!(processed[0].date, "Monday, January 1, 2024 10:00:00 AM");
+        assert_eq!(processed[1].date, "Friday, August 9, 2024 12:34:56 PM");
         assert_eq!(processed[2].title, "Book Two");
+    }
+
+    #[test]
+    fn falls_back_to_string_sort_for_unparseable_dates() {
+        let entries = vec![
+            KindleEntry {
+                title: "Book One".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Highlight".to_string(),
+                location: "20-21".to_string(),
+                date: "sexta-feira, 12 de julho de 2024 14:03:05".to_string(),
+                content: "Later".to_string(),
+            },
+            KindleEntry {
+                title: "Book One".to_string(),
+                author: "Author".to_string(),
+                entry_type: "Note".to_string(),
+                location: "3-4".to_string(),
+                date: "Sonntag, 17. Dezember 2023 22:10:11".to_string(),
+                content: "Sooner".to_string(),
+            },
+        ];
+
+        let processed = process_entries(entries, Some(SortKey::Date), false);
+
+        assert_eq!(processed[0].date, "Sonntag, 17. Dezember 2023 22:10:11");
+        assert_eq!(processed[1].date, "sexta-feira, 12 de julho de 2024 14:03:05");
     }
 
     #[test]

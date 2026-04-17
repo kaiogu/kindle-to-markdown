@@ -412,6 +412,52 @@ Other
 }
 
 #[test]
+fn sort_by_date_uses_parsed_kindle_timestamps() {
+    let temp = tempdir().expect("temp dir should exist");
+    let input = temp.path().join("date-order.txt");
+
+    fs::write(
+        &input,
+        r#"Book One (Author A) - Your Highlight on Location 20-21 | Added on Friday, August 9, 2024 12:34:56 PM
+
+Later
+
+==========
+Book One (Author A) - Your Highlight on Location 3-4 | Added on Monday, January 1, 2024 10:00:00 AM
+
+Sooner
+
+==========
+Book Two (Author B) - Your Highlight on Location 9 | Added on Tuesday, February 6, 2024 8:00:00 AM
+
+Other
+
+==========
+"#,
+    )
+    .expect("test input should be written");
+
+    let output = Command::new(cli_binary())
+        .arg(&input)
+        .arg("--sort-by")
+        .arg("date")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success(), "process failed: {output:?}");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
+    let sooner_index = stdout.find("> Sooner").expect("Sooner entry should exist");
+    let later_index = stdout.find("> Later").expect("Later entry should exist");
+    let other_book_index = stdout
+        .find("# Book Two by Author B")
+        .expect("second book should exist");
+
+    assert!(sooner_index < later_index);
+    assert!(later_index < other_book_index);
+}
+
+#[test]
 fn dedupe_removes_duplicate_entries_from_output_and_stats() {
     let temp = tempdir().expect("temp dir should exist");
     let input = temp.path().join("duplicates.txt");

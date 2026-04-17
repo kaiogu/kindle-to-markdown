@@ -17,47 +17,81 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(name = "kindle-to-markdown")]
 #[command(about = "Convert Kindle highlights and notes from TXT to Markdown format")]
+#[command(
+    after_help = "Examples:\n  kindle-to-markdown sample_clippings.txt\n  kindle-to-markdown --discover --copy-raw\n  kindle-to-markdown --merge first.txt second.txt --dedupe\n  cat sample_clippings.txt | kindle-to-markdown --stats json"
+)]
 struct Cli {
-    #[arg(value_name = "INPUT")]
+    #[arg(
+        value_name = "INPUT",
+        help = "Input clipping file path(s). Pass multiple files only with --merge"
+    )]
     input: Vec<PathBuf>,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Auto-discover My Clippings.txt from a mounted Kindle"
+    )]
     discover: bool,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Print the resolved settings file path and exit"
+    )]
     print_settings_path: bool,
 
-    #[arg(long)]
+    #[arg(long, help = "Load settings from an explicit TOML file path")]
     config: Option<PathBuf>,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Write a commented example settings file and exit"
+    )]
     init_config: bool,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Merge multiple input files instead of rejecting them"
+    )]
     merge: bool,
 
-    #[arg(short, long)]
+    #[arg(
+        short,
+        long,
+        help = "Write output to a file or directory instead of stdout"
+    )]
     output: Option<PathBuf>,
 
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Output layout")]
     layout: Option<LayoutArg>,
 
-    #[arg(long, value_enum)]
+    #[arg(
+        long,
+        value_enum,
+        help = "Sort book sections or entries before rendering"
+    )]
     sort_by: Option<SortArg>,
 
-    #[arg(long, action = ArgAction::SetTrue, overrides_with = "no_dedupe")]
+    #[arg(long, action = ArgAction::SetTrue, overrides_with = "no_dedupe", help = "Drop exact duplicate entries after parsing")]
     dedupe: bool,
 
-    #[arg(long, action = ArgAction::SetTrue, overrides_with = "dedupe")]
+    #[arg(long, action = ArgAction::SetTrue, overrides_with = "dedupe", help = "Keep duplicate entries even if settings enable dedupe")]
     no_dedupe: bool,
 
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Statistics output format written to stderr")]
     stats: Option<StatsArg>,
 
-    #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "__AUTO__")]
+    #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "__AUTO__", help = "Copy the raw input file alongside the export, or to PATH if provided")]
     copy_raw: Option<String>,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Disable statistics output entirely"
+    )]
     no_stats: bool,
 }
 
@@ -144,10 +178,12 @@ fn run(cli: Cli, stdin_is_terminal: bool, settings_path: &Path) -> Result<()> {
         InputSource::Files(paths) => {
             if raw_copy_mode != RawCopyMode::Disabled {
                 bail!(
-                    "--copy-raw is not supported with --merge; merge inputs first, then copy raw files manually"
+                    "--copy-raw is not supported with --merge because there is no single raw source file; copy the raw files manually or process one input at a time"
                 );
             }
 
+            // Parse each file independently before combining entries so one source
+            // cannot affect chunk boundaries in another.
             let mut merged = Vec::new();
             for path in &paths {
                 let input = fs::read_to_string(path).with_context(|| {
@@ -267,11 +303,11 @@ fn select_input_source(
     merge: bool,
 ) -> Result<InputSource> {
     if !input.is_empty() && discover {
-        bail!("cannot use an input file with --discover");
+        bail!("cannot use explicit input files with --discover");
     }
 
     if input.len() > 1 && !merge {
-        bail!("multiple input files require --merge");
+        bail!("multiple input files require --merge; otherwise pass exactly one file");
     }
 
     if let [path] = input {
@@ -284,7 +320,7 @@ fn select_input_source(
         Ok(InputSource::Stdin)
     } else {
         bail!(
-            "missing input: provide a file path, pipe clippings through stdin, or pass --discover"
+            "missing input: provide a clipping file path, pipe clippings through stdin, or pass --discover"
         )
     }
 }
@@ -466,7 +502,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("cannot use an input file with --discover")
+                .contains("cannot use explicit input files with --discover")
         );
     }
 

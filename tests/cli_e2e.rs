@@ -126,7 +126,7 @@ fn rejects_conflicting_file_and_discover_inputs() {
     assert!(!output.status.success(), "process unexpectedly succeeded");
 
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-    assert!(stderr.contains("cannot use an input file with --discover"));
+    assert!(stderr.contains("cannot use explicit input files with --discover"));
 }
 
 #[test]

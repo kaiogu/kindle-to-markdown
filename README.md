@@ -45,6 +45,12 @@ Output:
 
 ### Quick Start
 
+The CLI also documents every flag directly:
+
+```bash
+cargo run -- --help
+```
+
 ```bash
 cargo run -- sample_clippings.txt
 ```

@@ -208,6 +208,7 @@ fn windows_drive_roots() -> Vec<PathBuf> {
 }
 
 fn wsl_drive_roots() -> Vec<PathBuf> {
+    // WSL usually exposes Windows removable drives through /mnt/<letter>.
     (b'a'..=b'z')
         .map(|letter| PathBuf::from(format!("/mnt/{}", letter as char)))
         .collect()

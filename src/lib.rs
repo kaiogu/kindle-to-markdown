@@ -23,6 +23,12 @@ pub enum HostPlatform {
     Wsl,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputLayout {
+    SingleFile,
+    ByBook,
+}
+
 pub fn detect_host_platform() -> HostPlatform {
     if cfg!(windows) {
         HostPlatform::Windows
@@ -37,6 +43,10 @@ pub fn detect_host_platform() -> HostPlatform {
 
 pub fn default_pull_destination() -> PathBuf {
     PathBuf::from("local").join("my-clippings.txt")
+}
+
+pub fn default_export_directory() -> PathBuf {
+    PathBuf::from("clippings")
 }
 
 pub fn copy_kindle_clippings(source: Option<&Path>, destination: &Path) -> Result<PathBuf> {
@@ -247,12 +257,111 @@ pub fn convert_to_markdown(entries: &[KindleEntry]) -> String {
     markdown
 }
 
+pub fn write_markdown_output(
+    entries: &[KindleEntry],
+    output_dir: &Path,
+    layout: OutputLayout,
+) -> Result<Vec<PathBuf>> {
+    fs::create_dir_all(output_dir)
+        .with_context(|| format!("failed to create output directory {}", output_dir.display()))?;
+
+    match layout {
+        OutputLayout::SingleFile => write_single_markdown_file(entries, output_dir),
+        OutputLayout::ByBook => write_markdown_files_by_book(entries, output_dir),
+    }
+}
+
+fn write_single_markdown_file(entries: &[KindleEntry], output_dir: &Path) -> Result<Vec<PathBuf>> {
+    let destination = output_dir.join("clippings.md");
+    fs::write(&destination, convert_to_markdown(entries))
+        .with_context(|| format!("failed to write markdown file {}", destination.display()))?;
+
+    Ok(vec![destination])
+}
+
+fn write_markdown_files_by_book(
+    entries: &[KindleEntry],
+    output_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    let mut written = Vec::new();
+    let mut current_book = None::<(String, String)>;
+    let mut current_entries = Vec::new();
+
+    for entry in entries {
+        let book = (entry.title.clone(), entry.author.clone());
+        if current_book.as_ref() != Some(&book) {
+            if let Some((title, author)) = current_book.take() {
+                written.push(write_book_markdown_file(
+                    output_dir,
+                    &title,
+                    &author,
+                    &current_entries,
+                )?);
+                current_entries.clear();
+            }
+            current_book = Some(book);
+        }
+
+        current_entries.push(entry.clone());
+    }
+
+    if let Some((title, author)) = current_book {
+        written.push(write_book_markdown_file(
+            output_dir,
+            &title,
+            &author,
+            &current_entries,
+        )?);
+    }
+
+    Ok(written)
+}
+
+fn write_book_markdown_file(
+    output_dir: &Path,
+    title: &str,
+    author: &str,
+    entries: &[KindleEntry],
+) -> Result<PathBuf> {
+    let file_name = format!("{}.md", slugify_book_title(title, author));
+    let destination = output_dir.join(file_name);
+    fs::write(&destination, convert_to_markdown(entries))
+        .with_context(|| format!("failed to write markdown file {}", destination.display()))?;
+
+    Ok(destination)
+}
+
+fn slugify_book_title(title: &str, author: &str) -> String {
+    let combined = format!("{} {}", title, author).to_lowercase();
+    let mut slug = String::with_capacity(combined.len());
+    let mut last_was_separator = false;
+
+    for ch in combined.chars() {
+        let is_word = ch.is_ascii_alphanumeric();
+        if is_word {
+            slug.push(ch);
+            last_was_separator = false;
+        } else if !last_was_separator {
+            slug.push('-');
+            last_was_separator = true;
+        }
+    }
+
+    let trimmed = slug.trim_matches('-');
+    if trimmed.is_empty() {
+        "book".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        HostPlatform, clippings_paths_for_device_root, convert_to_markdown, copy_kindle_clippings,
-        default_pull_destination, device_roots_for_platform, find_kindle_clippings_path_from_roots,
-        parse_kindle_clippings,
+        HostPlatform, OutputLayout, clippings_paths_for_device_root, convert_to_markdown,
+        copy_kindle_clippings, default_export_directory, default_pull_destination,
+        device_roots_for_platform, find_kindle_clippings_path_from_roots, parse_kindle_clippings,
+        write_markdown_output,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -353,6 +462,11 @@ Beta
     }
 
     #[test]
+    fn defaults_export_directory_to_clippings_folder() {
+        assert_eq!(default_export_directory(), PathBuf::from("clippings"));
+    }
+
+    #[test]
     fn finds_first_existing_clippings_file_from_roots() {
         let temp = tempdir().expect("temp dir should exist");
         let kindle = temp.path().join("Kindle");
@@ -392,5 +506,49 @@ Beta
 
         assert!(roots.contains(&PathBuf::from("/mnt/c")));
         assert!(roots.contains(&PathBuf::from("/mnt/z")));
+    }
+
+    #[test]
+    fn writes_single_markdown_file_to_output_directory() {
+        let temp = tempdir().expect("temp dir should exist");
+        let entries = parse_kindle_clippings(SAMPLE_INPUT).expect("sample input should parse");
+
+        let written = write_markdown_output(&entries, temp.path(), OutputLayout::SingleFile)
+            .expect("single file write should succeed");
+
+        assert_eq!(written.len(), 1);
+        assert_eq!(written[0], temp.path().join("clippings.md"));
+        let output =
+            fs::read_to_string(&written[0]).expect("single markdown file should be readable");
+        assert!(output.contains("# The Rust Programming Language by Steve Klabnik, Carol Nichols"));
+    }
+
+    #[test]
+    fn writes_one_markdown_file_per_book() {
+        let temp = tempdir().expect("temp dir should exist");
+        let input = r#"Book One (Author A) - Your Highlight on page 1 | Location 1-1 | Added on Monday, January 1, 2024 10:00:00 AM
+
+Alpha
+
+==========
+Book Two (Author B) - Your Highlight on page 2 | Location 2-2 | Added on Monday, January 1, 2024 11:00:00 AM
+
+Beta
+
+==========
+"#;
+        let entries = parse_kindle_clippings(input).expect("input should parse");
+
+        let written = write_markdown_output(&entries, temp.path(), OutputLayout::ByBook)
+            .expect("per-book write should succeed");
+
+        assert_eq!(written.len(), 2);
+        assert!(written.contains(&temp.path().join("book-one-author-a.md")));
+        assert!(written.contains(&temp.path().join("book-two-author-b.md")));
+
+        let first = fs::read_to_string(temp.path().join("book-one-author-a.md"))
+            .expect("book markdown should be readable");
+        assert!(first.contains("# Book One by Author A"));
+        assert!(!first.contains("Book Two"));
     }
 }

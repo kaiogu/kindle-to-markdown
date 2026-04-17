@@ -47,16 +47,34 @@ Output:
 cargo run -- -i sample_clippings.txt
 ```
 
-Copy `My Clippings.txt` from a connected Kindle into `local/`:
+Export from a connected Kindle into the default `clippings/` folder:
 
 ```bash
-cargo run -- pull
+cargo run -- export
 ```
 
-Override the source or destination explicitly:
+Save the raw Kindle file too:
 
 ```bash
-cargo run -- pull --source "/path/to/My Clippings.txt" --dest local/my-clippings.txt
+cargo run -- export --save-raw local/my-clippings.txt
+```
+
+Write one Markdown file per book:
+
+```bash
+cargo run -- export --layout by-book
+```
+
+Override the input or output locations explicitly:
+
+```bash
+cargo run -- export --input "/path/to/My Clippings.txt" --out-dir my-notes
+```
+
+Copy only the raw Kindle file into `local/`:
+
+```bash
+cargo run -- pull --dest local/my-clippings.txt
 ```
 
 Write to a file:
@@ -82,6 +100,8 @@ The `pull` command looks for `My Clippings.txt` in the common device mount locat
 - WSL: Windows drive mounts like `/mnt/e/`
 
 It checks both the device root and `documents/My Clippings.txt`, then copies the first match into `local/my-clippings.txt` by default.
+
+The `export` command uses the same discovery logic. If you do not pass `--save-raw`, it reads directly from the connected Kindle and only writes Markdown output into `clippings/`.
 
 ## Development Workflow
 

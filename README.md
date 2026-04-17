@@ -229,6 +229,8 @@ feat!: rename output headings
 
 `release-plz` opens a release PR from commits on `main`, updates `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md`, then creates a Git tag and GitHub release when that PR is merged. If you want the normal CI workflow to run on release PRs too, add a `RELEASE_PLZ_TOKEN` repository secret and give it `contents` and `pull requests` write access.
 
+Published GitHub releases also attach prebuilt binaries for Linux, macOS, and Windows.
+
 ## Project Layout
 
 ```text

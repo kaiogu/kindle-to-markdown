@@ -1,0 +1,8 @@
+Clean Code (Robert C. Martin) - Your Bookmark on Location 1500 | Added on Saturday, August 10, 2024 10:00:00 AM
+
+==========
+Clean Code (Robert C. Martin) - Your Highlight on Location 1234-1237 | Added on Saturday, August 10, 2024 9:45:00 AM
+
+Functions should do one thing.
+
+==========

@@ -95,7 +95,7 @@ fn writes_markdown_to_stdout_and_stats_to_stderr_for_file_input() {
 #[test]
 fn reads_stdin_when_no_input_path_is_given() {
     let stdin = standard_clippings_input();
-    let output = run_cli_with_stdin(&[], &stdin);
+    let output = run_cli_with_stdin(&[], stdin);
 
     assert!(output.status.success(), "process failed: {output:?}");
 

@@ -1,0 +1,22 @@
+Refactoring (Martin Fowler) - Your Highlight on page 14 | Location 300-301 | Added on Wednesday, April 3, 2024 6:30:00 PM
+
+Good code should reveal intent.
+
+==========
+Broken Entry Without Metadata
+
+This should be ignored.
+
+==========
+Domain-Driven Design (Eric Evans)
+- Your Note on Location 512 | Added on Thursday, April 4, 2024 9:45:10 PM
+
+Shared language shapes better models.
+
+==========
+Missing Author Line
+- Your Highlight on page 5 | Added on Friday, April 5, 2024 7:00:00 AM
+
+This should also be ignored.
+
+==========

@@ -232,10 +232,10 @@ pub fn parse_kindle_clippings(content: &str) -> Result<Vec<KindleEntry>> {
     let chunks: Vec<&str> = content.split(separator).collect();
 
     let single_line_re = Regex::new(
-        r"^(.+) \((.+)\) - Your (Highlight|Note|Bookmark) (?:on page \d+ \| )?Location ([^|]+) \| Added on (.+)$",
+        r"^(.+) \((.+)\) - Your (Highlight|Note|Bookmark) on (?:page \d+ \| )?Location ([^|]+) \| Added on (.+)$",
     )?;
     let metadata_re = Regex::new(
-        r"^- Your (Highlight|Note|Bookmark) (?:on page \d+ \| )?Location ([^|]+) \| Added on (.+)$",
+        r"^- Your (Highlight|Note|Bookmark) on (?:page \d+ \| )?Location ([^|]+) \| Added on (.+)$",
     )?;
 
     for chunk in chunks {
@@ -516,6 +516,14 @@ mod tests {
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
+    fn read_fixture(name: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name);
+        fs::read_to_string(path).expect("fixture should be readable")
+    }
+
     const SAMPLE_INPUT: &str = r#"The Rust Programming Language (Steve Klabnik, Carol Nichols) - Your Highlight on page 23 | Location 234-236 | Added on Friday, August 9, 2024 12:34:56 PM
 
 Memory safety is one of Rust's main selling points.
@@ -566,6 +574,97 @@ This should be ignored.
         assert_eq!(entries[1].author, "David J. Chalmers");
         assert_eq!(entries[1].entry_type, "Note");
         assert_eq!(entries[1].content, "Is it really though?");
+    }
+
+    #[test]
+    fn parses_one_line_fixture_with_page_metadata() {
+        let entries = parse_kindle_clippings(&read_fixture("one-line-page-present.txt"))
+            .expect("fixture should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Deep Work");
+        assert_eq!(entries[0].author, "Cal Newport");
+        assert_eq!(entries[0].entry_type, "Highlight");
+        assert_eq!(entries[0].location, "1324-1325");
+        assert_eq!(
+            entries[0].content,
+            "Focus without distraction is rare and valuable."
+        );
+    }
+
+    #[test]
+    fn parses_one_line_fixture_without_page_metadata() {
+        let entries = parse_kindle_clippings(&read_fixture("one-line-page-absent.txt"))
+            .expect("fixture should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].entry_type, "Bookmark");
+        assert_eq!(entries[0].location, "1500");
+        assert_eq!(entries[0].content, "");
+        assert_eq!(entries[1].entry_type, "Highlight");
+        assert_eq!(entries[1].location, "1234-1237");
+        assert_eq!(entries[1].content, "Functions should do one thing.");
+    }
+
+    #[test]
+    fn parses_two_line_fixture_without_bom() {
+        let entries = parse_kindle_clippings(&read_fixture("two-line-no-bom.txt"))
+            .expect("fixture should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "The Pragmatic Programmer");
+        assert_eq!(entries[0].author, "Andy Hunt, Dave Thomas");
+        assert_eq!(entries[0].entry_type, "Note");
+        assert_eq!(entries[0].location, "610-611");
+        assert_eq!(entries[0].content, "Good reminder about feedback loops.");
+    }
+
+    #[test]
+    fn parses_two_line_fixture_with_bom() {
+        let entries = parse_kindle_clippings(&read_fixture("two-line-bom.txt"))
+            .expect("fixture should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "The Sirens of Titan");
+        assert_eq!(entries[0].author, "Kurt Vonnegut");
+        assert_eq!(entries[0].entry_type, "Highlight");
+        assert_eq!(entries[0].location, "3355-3356");
+        assert_eq!(
+            entries[0].content,
+            "He used it in order to assert the friendship he felt for Rumfoord."
+        );
+    }
+
+    #[test]
+    fn parses_bookmark_only_fixture() {
+        let entries = parse_kindle_clippings(&read_fixture("bookmark-only.txt"))
+            .expect("fixture should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|entry| entry.entry_type == "Bookmark"));
+        assert!(entries.iter().all(|entry| entry.content.is_empty()));
+    }
+
+    #[test]
+    fn skips_malformed_chunks_in_fixture() {
+        let entries = parse_kindle_clippings(&read_fixture("malformed-chunks.txt"))
+            .expect("fixture should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].title, "Refactoring");
+        assert_eq!(entries[1].title, "Domain-Driven Design");
+    }
+
+    #[test]
+    fn parses_mixed_locale_date_variants_fixture() {
+        let entries = parse_kindle_clippings(&read_fixture("mixed-locale-date-variants.txt"))
+            .expect("fixture should parse");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].date, "Sonntag, 17. Dezember 2023 22:10:11");
+        assert_eq!(entries[1].date, "sexta-feira, 12 de julho de 2024 14:03:05");
+        assert_eq!(entries[1].title, "Cem Anos de Solidao");
+        assert_eq!(entries[1].author, "Gabriel Garcia Marquez");
     }
 
     #[test]

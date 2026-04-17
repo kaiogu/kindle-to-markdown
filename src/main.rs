@@ -25,8 +25,8 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = LayoutArg::Single)]
     layout: LayoutArg,
 
-    #[arg(long, default_value_t = false)]
-    save_raw: bool,
+    #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "__AUTO__")]
+    copy_raw: Option<String>,
 
     #[arg(long, default_value_t = false)]
     no_stats: bool,
@@ -60,40 +60,55 @@ fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
     let layout = map_layout(cli.layout);
     let input_source = select_input_source(stdin_is_terminal, cli.input.as_deref(), cli.discover)?;
     let destination = select_export_destination(layout, cli.output.as_deref(), cli.discover);
+    let raw_copy_mode = parse_raw_copy_mode(cli.copy_raw.as_deref())?;
 
-    if cli.save_raw && matches!(input_source, InputSource::Stdin) {
-        bail!("cannot use --save-raw with stdin input");
-    }
-
-    let (entries, raw_input_path) = match input_source {
+    let (entries, raw_input_path, raw_stdin_content) = match input_source {
         InputSource::Stdin => {
             let input = read_stdin_to_string()?;
-            (parse_kindle_clippings(&input)?, None)
+            let entries = parse_kindle_clippings(&input)?;
+            (entries, None, Some(input))
         }
         InputSource::File(path) => {
             let input = fs::read_to_string(&path).with_context(|| {
                 format!("failed to read clippings input from {}", path.display())
             })?;
-            (parse_kindle_clippings(&input)?, Some(path))
+            (parse_kindle_clippings(&input)?, Some(path), None)
         }
         InputSource::Discover => {
             let path = find_kindle_clippings_path()?;
             let input = fs::read_to_string(&path).with_context(|| {
                 format!("failed to read clippings input from {}", path.display())
             })?;
-            (parse_kindle_clippings(&input)?, Some(path))
+            (parse_kindle_clippings(&input)?, Some(path), None)
         }
     };
 
-    if cli.save_raw {
-        let raw_input_path = raw_input_path
-            .as_deref()
-            .context("save_raw requires a file-backed input source")?;
-        let raw_destination = raw_destination_for_destination(raw_input_path, &destination);
-
-        if raw_destination != raw_input_path {
-            copy_kindle_clippings(Some(raw_input_path), &raw_destination)?;
-            println!("Saved raw clippings to {}", raw_destination.display());
+    if let Some(raw_destination) =
+        resolve_raw_copy_destination(&raw_copy_mode, raw_input_path.as_deref(), &destination)?
+    {
+        match raw_input_path.as_deref() {
+            Some(source_path) if raw_destination != source_path => {
+                copy_kindle_clippings(Some(source_path), &raw_destination)?;
+                println!("Copied raw clippings to {}", raw_destination.display());
+            }
+            Some(_) => {}
+            None => {
+                let stdin_content = raw_stdin_content
+                    .as_deref()
+                    .context("stdin raw copy content should be present")?;
+                if let Some(parent) = raw_destination.parent() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create raw output directory {}", parent.display())
+                    })?;
+                }
+                fs::write(&raw_destination, stdin_content).with_context(|| {
+                    format!(
+                        "failed to write raw stdin copy to {}",
+                        raw_destination.display()
+                    )
+                })?;
+                println!("Copied raw clippings to {}", raw_destination.display());
+            }
         }
     }
 
@@ -120,6 +135,22 @@ fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RawCopyMode {
+    Disabled,
+    Auto,
+    Explicit(PathBuf),
+}
+
+fn parse_raw_copy_mode(value: Option<&str>) -> Result<RawCopyMode> {
+    match value {
+        None => Ok(RawCopyMode::Disabled),
+        Some("__AUTO__") => Ok(RawCopyMode::Auto),
+        Some(path) if path.trim().is_empty() => bail!("--copy-raw path cannot be empty"),
+        Some(path) => Ok(RawCopyMode::Explicit(PathBuf::from(path))),
+    }
 }
 
 fn read_stdin_to_string() -> Result<String> {
@@ -178,6 +209,26 @@ fn raw_destination_for_destination(input_path: &Path, destination: &ExportDestin
     }
 }
 
+fn resolve_raw_copy_destination(
+    mode: &RawCopyMode,
+    input_path: Option<&Path>,
+    destination: &ExportDestination,
+) -> Result<Option<PathBuf>> {
+    match mode {
+        RawCopyMode::Disabled => Ok(None),
+        RawCopyMode::Explicit(path) => Ok(Some(path.clone())),
+        RawCopyMode::Auto => {
+            let input_path = input_path.context(
+                "--copy-raw without a path requires a file path or --discover input source",
+            )?;
+            Ok(Some(raw_destination_for_destination(
+                input_path,
+                destination,
+            )))
+        }
+    }
+}
+
 fn render_output_target(target: &OutputTarget) -> String {
     match target {
         OutputTarget::File(path) => path.display().to_string(),
@@ -195,8 +246,9 @@ fn map_layout(layout: LayoutArg) -> OutputLayout {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, ExportDestination, InputSource, LayoutArg, map_layout,
-        raw_destination_for_destination, select_export_destination, select_input_source,
+        Cli, ExportDestination, InputSource, LayoutArg, RawCopyMode, map_layout,
+        parse_raw_copy_mode, raw_destination_for_destination, resolve_raw_copy_destination,
+        select_export_destination, select_input_source,
     };
     use clap::Parser;
     use kindle_to_markdown::{OutputLayout, OutputTarget, default_export_directory};
@@ -282,10 +334,57 @@ mod tests {
     }
 
     #[test]
+    fn parses_copy_raw_flag_without_value_as_auto() {
+        assert_eq!(
+            parse_raw_copy_mode(Some("__AUTO__")).expect("auto copy mode should parse"),
+            RawCopyMode::Auto
+        );
+    }
+
+    #[test]
+    fn parses_copy_raw_flag_with_path() {
+        assert_eq!(
+            parse_raw_copy_mode(Some("raw/input.txt")).expect("explicit copy mode should parse"),
+            RawCopyMode::Explicit(PathBuf::from("raw/input.txt"))
+        );
+    }
+
+    #[test]
+    fn resolves_auto_raw_copy_for_file_backed_input() {
+        let destination = resolve_raw_copy_destination(
+            &RawCopyMode::Auto,
+            Some(Path::new("/tmp/My Clippings.txt")),
+            &ExportDestination::Target(OutputTarget::Directory(PathBuf::from("notes"))),
+        )
+        .expect("auto raw destination should resolve");
+
+        assert_eq!(destination, Some(PathBuf::from("notes/My Clippings.txt")));
+    }
+
+    #[test]
+    fn rejects_auto_raw_copy_for_stdin() {
+        let error =
+            resolve_raw_copy_destination(&RawCopyMode::Auto, None, &ExportDestination::Stdout)
+                .expect_err("stdin without explicit raw path should fail");
+
+        assert!(
+            error.to_string().contains(
+                "--copy-raw without a path requires a file path or --discover input source"
+            )
+        );
+    }
+
+    #[test]
     fn cli_parses_positional_input_and_discover_flag() {
         let cli = Cli::parse_from(["kindle-to-markdown", "--discover", "--layout", "by-book"]);
         assert_eq!(cli.input, None);
         assert!(cli.discover);
         assert!(matches!(cli.layout, LayoutArg::ByBook));
+    }
+
+    #[test]
+    fn cli_parses_copy_raw_with_optional_path() {
+        let cli = Cli::parse_from(["kindle-to-markdown", "--copy-raw=local/raw.txt"]);
+        assert_eq!(cli.copy_raw, Some("local/raw.txt".to_string()));
     }
 }

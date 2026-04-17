@@ -68,13 +68,19 @@ cargo run -- sample_clippings.txt --layout by-book
 Save the raw Kindle file alongside the export, keeping its original filename:
 
 ```bash
-cargo run -- --discover --save-raw
+cargo run -- --discover --copy-raw
 ```
 
 Write a single Markdown file to an explicit path:
 
 ```bash
 cargo run -- sample_clippings.txt --output my-notes/highlights.md
+```
+
+Copy raw stdin input to an explicit file while converting:
+
+```bash
+cat sample_clippings.txt | cargo run -- --copy-raw local/raw-clippings.txt
 ```
 
 Suppress the default per-book statistics output:
@@ -117,12 +123,18 @@ Defaults:
 - `--discover`, `single` layout, no `--output`: write `clippings/clippings.md`
 - `by-book` layout, no `--output`: write multiple files under `clippings/`
 
-If you pass `--save-raw`, the raw file keeps its original name:
+If you pass `--copy-raw`, the raw file is copied too:
 
-- single-file export: next to the Markdown file
-- directory export: inside the output directory
+- `--copy-raw` with no path:
+  - file or `--discover` input only
+  - keeps the original filename
+  - single-file export: next to the Markdown file
+  - directory export: inside the output directory
+- `--copy-raw PATH`:
+  - writes the raw copy exactly to `PATH`
+  - works with file input, `--discover`, and `stdin`
 
-If `stdout` is the Markdown destination, the raw file is saved to `clippings/My Clippings.txt`.
+If `stdout` is the Markdown destination and `--copy-raw` is automatic, the raw file is saved to `clippings/My Clippings.txt`.
 
 The tool prints per-book counts by default to `stderr`. Use `--no-stats` to silence the statistics summary.
 

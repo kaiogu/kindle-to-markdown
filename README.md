@@ -44,81 +44,87 @@ Output:
 ## Quick Start
 
 ```bash
-cargo run -- -i sample_clippings.txt
+cargo run -- sample_clippings.txt
 ```
 
-Export from a connected Kindle into the default `clippings/` folder:
+Read from stdin and write Markdown to stdout:
 
 ```bash
-cargo run -- export
+cat sample_clippings.txt | cargo run --
 ```
 
-Save the raw Kindle file alongside the export, keeping its original filename:
+Read from a connected Kindle:
 
 ```bash
-cargo run -- export --save-raw
+cargo run -- --discover
 ```
 
 Write one Markdown file per book:
 
 ```bash
-cargo run -- export --layout by-book
+cargo run -- sample_clippings.txt --layout by-book
 ```
 
-Override the input or output locations explicitly:
+Save the raw Kindle file alongside the export, keeping its original filename:
 
 ```bash
-cargo run -- export --input "/path/to/My Clippings.txt" --output my-notes
+cargo run -- --discover --save-raw
 ```
 
 Write a single Markdown file to an explicit path:
 
 ```bash
-cargo run -- export --output my-notes/highlights.md --save-raw
+cargo run -- sample_clippings.txt --output my-notes/highlights.md
 ```
 
 Suppress the default per-book statistics output:
 
 ```bash
-cargo run -- export --no-stats
-```
-
-Copy only the raw Kindle file into `local/`:
-
-```bash
-cargo run -- pull --dest local/my-clippings.txt
-```
-
-Write to a file:
-
-```bash
-cargo run -- -i "My Clippings.txt" -o highlights.md
+cargo run -- sample_clippings.txt --no-stats
 ```
 
 Build a release binary:
 
 ```bash
 cargo build --release
-./target/release/kindle-to-markdown -i "My Clippings.txt" -o highlights.md
+./target/release/kindle-to-markdown "My Clippings.txt" --output highlights.md
 ```
 
-## Device Import
+## Input Rules
 
-The `pull` command looks for `My Clippings.txt` in the common device mount locations for:
+The CLI accepts exactly one input source:
+
+- piped `stdin`
+- a positional file path
+- `--discover`
+
+If more than one input source is present, it exits with an error instead of trying to merge them implicitly.
+
+## Device Discovery
+
+`--discover` looks for `My Clippings.txt` in the common device mount locations for:
 
 - macOS: `/Volumes/<Kindle>/`
 - Linux: `/run/media/<user>/...`, `/media/<user>/...`, and `/mnt/...`
 - Windows: removable drive roots like `E:\`
 - WSL: Windows drive mounts like `/mnt/e/`
 
-It checks both the device root and `documents/My Clippings.txt`, then copies the first match into `local/my-clippings.txt` by default.
+It checks both the device root and `documents/My Clippings.txt`.
 
-The `export` command uses the same discovery logic. If you do not pass `--save-raw`, it reads directly from the connected Kindle and only writes Markdown output. If you do pass `--save-raw`, the raw file keeps its original name:
+Defaults:
+
+- positional file or `stdin`, `single` layout, no `--output`: write Markdown to `stdout`
+- `--discover`, `single` layout, no `--output`: write `clippings/clippings.md`
+- `by-book` layout, no `--output`: write multiple files under `clippings/`
+
+If you pass `--save-raw`, the raw file keeps its original name:
 
 - single-file export: next to the Markdown file
 - directory export: inside the output directory
 
-Both `export` and direct conversion print per-book counts by default to `stderr`. Use `--no-stats` to silence the statistics summary.
+If `stdout` is the Markdown destination, the raw file is saved to `clippings/My Clippings.txt`.
+
+The tool prints per-book counts by default to `stderr`. Use `--no-stats` to silence the statistics summary.
 
 ## Development Workflow
 

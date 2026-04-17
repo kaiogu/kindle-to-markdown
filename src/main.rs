@@ -1,43 +1,35 @@
-use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use anyhow::{Context, Result, bail};
+use clap::{Parser, ValueEnum};
 use kindle_to_markdown::{
-    OutputLayout, convert_to_markdown, copy_kindle_clippings, default_pull_destination,
-    find_kindle_clippings_path, parse_kindle_clippings, raw_destination_for_output,
-    render_book_stats, resolve_output_target, write_markdown_output,
+    OutputLayout, OutputTarget, convert_to_markdown, copy_kindle_clippings,
+    default_export_directory, find_kindle_clippings_path, parse_kindle_clippings,
+    raw_destination_for_output, render_book_stats, resolve_output_target, write_markdown_output,
 };
 use std::fs;
-use std::path::PathBuf;
+use std::io::{self, IsTerminal, Read};
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "kindle-to-markdown")]
 #[command(about = "Convert Kindle highlights and notes from TXT to Markdown format")]
 struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-
-    #[arg(short, long)]
+    #[arg(value_name = "INPUT")]
     input: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    discover: bool,
 
     #[arg(short, long)]
     output: Option<PathBuf>,
 
+    #[arg(long, value_enum, default_value_t = LayoutArg::Single)]
+    layout: LayoutArg,
+
+    #[arg(long, default_value_t = false)]
+    save_raw: bool,
+
     #[arg(long, default_value_t = false)]
     no_stats: bool,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    Pull(PullArgs),
-    Export(ExportArgs),
-}
-
-#[derive(Args)]
-struct PullArgs {
-    #[arg(long)]
-    source: Option<PathBuf>,
-
-    #[arg(long, default_value_os_t = default_pull_destination())]
-    dest: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -46,128 +38,254 @@ enum LayoutArg {
     ByBook,
 }
 
-#[derive(Args)]
-struct ExportArgs {
-    #[arg(long)]
-    input: Option<PathBuf>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InputSource {
+    Stdin,
+    File(PathBuf),
+    Discover,
+}
 
-    #[arg(long, default_value_t = false)]
-    save_raw: bool,
-
-    #[arg(short = 'o', long)]
-    output: Option<PathBuf>,
-
-    #[arg(long, value_enum, default_value_t = LayoutArg::Single)]
-    layout: LayoutArg,
-
-    #[arg(long, default_value_t = false)]
-    no_stats: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExportDestination {
+    Stdout,
+    Target(OutputTarget),
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    match cli.command {
-        Some(Command::Pull(args)) => pull_clippings(args),
-        Some(Command::Export(args)) => export_clippings(args),
-        None => convert_command(cli.input, cli.output, cli.no_stats),
-    }
+    run(cli, io::stdin().is_terminal())
 }
 
-fn convert_command(input: Option<PathBuf>, output: Option<PathBuf>, no_stats: bool) -> Result<()> {
-    let input = input.context("missing required argument `--input`; or use `pull` to copy My Clippings.txt from a connected Kindle")?;
-    let input_content = fs::read_to_string(&input)?;
-    let entries = parse_kindle_clippings(&input_content)?;
-    let markdown = convert_to_markdown(&entries);
+fn run(cli: Cli, stdin_is_terminal: bool) -> Result<()> {
+    let layout = map_layout(cli.layout);
+    let input_source = select_input_source(stdin_is_terminal, cli.input.as_deref(), cli.discover)?;
+    let destination = select_export_destination(layout, cli.output.as_deref(), cli.discover);
 
-    match output {
-        Some(output_path) => {
-            fs::write(&output_path, markdown)?;
+    if cli.save_raw && matches!(input_source, InputSource::Stdin) {
+        bail!("cannot use --save-raw with stdin input");
+    }
+
+    let (entries, raw_input_path) = match input_source {
+        InputSource::Stdin => {
+            let input = read_stdin_to_string()?;
+            (parse_kindle_clippings(&input)?, None)
+        }
+        InputSource::File(path) => {
+            let input = fs::read_to_string(&path).with_context(|| {
+                format!("failed to read clippings input from {}", path.display())
+            })?;
+            (parse_kindle_clippings(&input)?, Some(path))
+        }
+        InputSource::Discover => {
+            let path = find_kindle_clippings_path()?;
+            let input = fs::read_to_string(&path).with_context(|| {
+                format!("failed to read clippings input from {}", path.display())
+            })?;
+            (parse_kindle_clippings(&input)?, Some(path))
+        }
+    };
+
+    if cli.save_raw {
+        let raw_input_path = raw_input_path
+            .as_deref()
+            .context("save_raw requires a file-backed input source")?;
+        let raw_destination = raw_destination_for_destination(raw_input_path, &destination);
+
+        if raw_destination != raw_input_path {
+            copy_kindle_clippings(Some(raw_input_path), &raw_destination)?;
+            println!("Saved raw clippings to {}", raw_destination.display());
+        }
+    }
+
+    match &destination {
+        ExportDestination::Stdout => {
+            print!("{}", convert_to_markdown(&entries));
+        }
+        ExportDestination::Target(target) => {
+            let written = write_markdown_output(&entries, target, layout)?;
             println!(
-                "Converted {} entries to {}",
+                "Exported {} entries into {} file(s) under {}",
                 entries.len(),
-                output_path.display()
+                written.len(),
+                render_output_target(target)
             );
-        }
-        None => {
-            println!("{}", markdown);
+            for path in written {
+                println!("{}", path.display());
+            }
         }
     }
 
-    if !no_stats {
+    if !cli.no_stats {
         eprintln!("{}", render_book_stats(&entries));
     }
 
     Ok(())
 }
 
-fn pull_clippings(args: PullArgs) -> Result<()> {
-    let source = copy_kindle_clippings(args.source.as_deref(), &args.dest)?;
-    println!(
-        "Copied Kindle clippings from {} to {}",
-        source.display(),
-        args.dest.display()
-    );
-
-    Ok(())
+fn read_stdin_to_string() -> Result<String> {
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .context("failed to read clippings content from stdin")?;
+    Ok(input)
 }
 
-fn export_clippings(args: ExportArgs) -> Result<()> {
-    let layout = map_layout(args.layout);
-    let output_target = resolve_output_target(layout, args.output.as_deref());
-
-    let input_path = match args.input {
-        Some(path) => path,
-        None => find_kindle_clippings_path()?,
-    };
-
-    if args.save_raw {
-        let raw_destination = raw_destination_for_output(&input_path, &output_target);
-        if raw_destination != input_path {
-            copy_kindle_clippings(Some(&input_path), &raw_destination)?;
-        }
+fn select_input_source(
+    stdin_is_terminal: bool,
+    input: Option<&Path>,
+    discover: bool,
+) -> Result<InputSource> {
+    if input.is_some() && discover {
+        bail!("cannot use an input file with --discover");
     }
 
-    let input_content = fs::read_to_string(&input_path).with_context(|| {
-        format!(
-            "failed to read clippings input from {}",
-            input_path.display()
+    if let Some(path) = input {
+        Ok(InputSource::File(path.to_path_buf()))
+    } else if discover {
+        Ok(InputSource::Discover)
+    } else if !stdin_is_terminal {
+        Ok(InputSource::Stdin)
+    } else {
+        bail!(
+            "missing input: provide a file path, pipe clippings through stdin, or pass --discover"
         )
-    })?;
-    let entries = parse_kindle_clippings(&input_content)?;
-    let written = write_markdown_output(&entries, &output_target, layout)?;
+    }
+}
 
-    let output_label = match &output_target {
-        kindle_to_markdown::OutputTarget::File(path) => path.display().to_string(),
-        kindle_to_markdown::OutputTarget::Directory(path) => path.display().to_string(),
-    };
-
-    println!(
-        "Exported {} entries into {} file(s) under {}",
-        entries.len(),
-        written.len(),
-        output_label
-    );
-
-    for path in written {
-        println!("{}", path.display());
+fn select_export_destination(
+    layout: OutputLayout,
+    output: Option<&Path>,
+    discover: bool,
+) -> ExportDestination {
+    if let Some(output) = output {
+        return ExportDestination::Target(resolve_output_target(layout, Some(output)));
     }
 
-    if args.save_raw {
-        let raw_path = raw_destination_for_output(&input_path, &output_target);
-        println!("Saved raw clippings to {}", raw_path.display());
+    match layout {
+        OutputLayout::SingleFile if !discover => ExportDestination::Stdout,
+        _ => ExportDestination::Target(OutputTarget::Directory(default_export_directory())),
     }
+}
 
-    if !args.no_stats {
-        eprintln!("{}", render_book_stats(&entries));
+fn raw_destination_for_destination(input_path: &Path, destination: &ExportDestination) -> PathBuf {
+    match destination {
+        ExportDestination::Stdout => default_export_directory().join(
+            input_path
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("My Clippings.txt")),
+        ),
+        ExportDestination::Target(target) => raw_destination_for_output(input_path, target),
     }
+}
 
-    Ok(())
+fn render_output_target(target: &OutputTarget) -> String {
+    match target {
+        OutputTarget::File(path) => path.display().to_string(),
+        OutputTarget::Directory(path) => path.display().to_string(),
+    }
 }
 
 fn map_layout(layout: LayoutArg) -> OutputLayout {
     match layout {
         LayoutArg::Single => OutputLayout::SingleFile,
         LayoutArg::ByBook => OutputLayout::ByBook,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Cli, ExportDestination, InputSource, LayoutArg, map_layout,
+        raw_destination_for_destination, select_export_destination, select_input_source,
+    };
+    use clap::Parser;
+    use kindle_to_markdown::{OutputLayout, OutputTarget, default_export_directory};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn prefers_stdin_when_present() {
+        let input = select_input_source(false, None, false).expect("stdin should be selected");
+        assert_eq!(input, InputSource::Stdin);
+    }
+
+    #[test]
+    fn uses_positional_input_when_given() {
+        let input = select_input_source(true, Some(Path::new("my-clippings.txt")), false)
+            .expect("file should be selected");
+        assert_eq!(input, InputSource::File(PathBuf::from("my-clippings.txt")));
+    }
+
+    #[test]
+    fn uses_discover_only_when_requested() {
+        let input = select_input_source(true, None, true).expect("discover should be selected");
+        assert_eq!(input, InputSource::Discover);
+    }
+
+    #[test]
+    fn explicit_file_wins_over_implicit_stdin() {
+        let input = select_input_source(false, Some(Path::new("my-clippings.txt")), false)
+            .expect("file should win over implicit stdin");
+        assert_eq!(input, InputSource::File(PathBuf::from("my-clippings.txt")));
+    }
+
+    #[test]
+    fn rejects_file_input_with_discover() {
+        let error = select_input_source(true, Some(Path::new("my-clippings.txt")), true)
+            .expect_err("file and discover should conflict");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot use an input file with --discover")
+        );
+    }
+
+    #[test]
+    fn defaults_single_layout_to_stdout_without_discover() {
+        let destination = select_export_destination(OutputLayout::SingleFile, None, false);
+        assert_eq!(destination, ExportDestination::Stdout);
+    }
+
+    #[test]
+    fn defaults_discover_to_clippings_directory() {
+        let destination = select_export_destination(OutputLayout::SingleFile, None, true);
+        assert_eq!(
+            destination,
+            ExportDestination::Target(OutputTarget::Directory(default_export_directory()))
+        );
+    }
+
+    #[test]
+    fn defaults_by_book_layout_to_clippings_directory() {
+        let destination = select_export_destination(OutputLayout::ByBook, None, false);
+        assert_eq!(
+            destination,
+            ExportDestination::Target(OutputTarget::Directory(default_export_directory()))
+        );
+    }
+
+    #[test]
+    fn raw_destination_for_stdout_uses_clippings_directory() {
+        let destination = raw_destination_for_destination(
+            Path::new("/tmp/My Clippings.txt"),
+            &ExportDestination::Stdout,
+        );
+        assert_eq!(
+            destination,
+            PathBuf::from("clippings").join("My Clippings.txt")
+        );
+    }
+
+    #[test]
+    fn layout_mapping_matches_output_layout() {
+        assert_eq!(map_layout(LayoutArg::Single), OutputLayout::SingleFile);
+        assert_eq!(map_layout(LayoutArg::ByBook), OutputLayout::ByBook);
+    }
+
+    #[test]
+    fn cli_parses_positional_input_and_discover_flag() {
+        let cli = Cli::parse_from(["kindle-to-markdown", "--discover", "--layout", "by-book"]);
+        assert_eq!(cli.input, None);
+        assert!(cli.discover);
+        assert!(matches!(cli.layout, LayoutArg::ByBook));
     }
 }

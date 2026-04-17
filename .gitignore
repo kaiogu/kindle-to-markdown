@@ -2,3 +2,5 @@
 /.codex
 .DS_Store
 *.swp
+/local
+/tmp

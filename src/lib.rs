@@ -1,5 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
+use std::collections::BTreeSet;
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KindleEntry {
@@ -9,6 +13,158 @@ pub struct KindleEntry {
     pub location: String,
     pub date: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostPlatform {
+    Windows,
+    MacOs,
+    Linux,
+    Wsl,
+}
+
+pub fn detect_host_platform() -> HostPlatform {
+    if cfg!(windows) {
+        HostPlatform::Windows
+    } else if env::var_os("WSL_DISTRO_NAME").is_some() || env::var_os("WSL_INTEROP").is_some() {
+        HostPlatform::Wsl
+    } else if cfg!(target_os = "macos") {
+        HostPlatform::MacOs
+    } else {
+        HostPlatform::Linux
+    }
+}
+
+pub fn default_pull_destination() -> PathBuf {
+    PathBuf::from("local").join("my-clippings.txt")
+}
+
+pub fn copy_kindle_clippings(source: Option<&Path>, destination: &Path) -> Result<PathBuf> {
+    let source_path = match source {
+        Some(path) => path.to_path_buf(),
+        None => find_kindle_clippings_path()?,
+    };
+
+    if !source_path.is_file() {
+        bail!(
+            "Kindle clippings file not found at {}",
+            source_path.display()
+        );
+    }
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create destination directory {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    fs::copy(&source_path, destination).with_context(|| {
+        format!(
+            "failed to copy clippings from {} to {}",
+            source_path.display(),
+            destination.display()
+        )
+    })?;
+
+    Ok(source_path)
+}
+
+pub fn find_kindle_clippings_path() -> Result<PathBuf> {
+    let roots = device_roots_for_platform(detect_host_platform(), env::var_os("USER"));
+    find_kindle_clippings_path_from_roots(&roots).ok_or_else(|| {
+        anyhow!(
+            "could not find My Clippings.txt on a connected Kindle. Try `pull --source /path/to/My Clippings.txt` if auto-detection misses your device."
+        )
+    })
+}
+
+fn find_kindle_clippings_path_from_roots(roots: &[PathBuf]) -> Option<PathBuf> {
+    roots
+        .iter()
+        .flat_map(|root| clippings_paths_for_device_root(root))
+        .find(|path| path.is_file())
+}
+
+fn clippings_paths_for_device_root(root: &Path) -> [PathBuf; 2] {
+    [
+        root.join("My Clippings.txt"),
+        root.join("documents").join("My Clippings.txt"),
+    ]
+}
+
+fn device_roots_for_platform(
+    platform: HostPlatform,
+    user: Option<std::ffi::OsString>,
+) -> Vec<PathBuf> {
+    let roots = match platform {
+        HostPlatform::Windows => windows_drive_roots(),
+        HostPlatform::Wsl => wsl_drive_roots(),
+        HostPlatform::MacOs => mounted_children([PathBuf::from("/Volumes")]),
+        HostPlatform::Linux => linux_mount_roots(user),
+    };
+
+    dedupe_paths(roots)
+}
+
+fn windows_drive_roots() -> Vec<PathBuf> {
+    (b'A'..=b'Z')
+        .map(|letter| PathBuf::from(format!("{}:\\", letter as char)))
+        .collect()
+}
+
+fn wsl_drive_roots() -> Vec<PathBuf> {
+    (b'a'..=b'z')
+        .map(|letter| PathBuf::from(format!("/mnt/{}", letter as char)))
+        .collect()
+}
+
+fn linux_mount_roots(user: Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let mut parents = vec![PathBuf::from("/mnt")];
+
+    if let Some(user) = user {
+        parents.push(PathBuf::from("/run/media").join(&user));
+        parents.push(PathBuf::from("/media").join(&user));
+    }
+
+    parents.push(PathBuf::from("/run/media"));
+    parents.push(PathBuf::from("/media"));
+
+    mounted_children(parents)
+}
+
+fn mounted_children(parents: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    for parent in parents {
+        let Ok(entries) = fs::read_dir(&parent) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                roots.push(path);
+            }
+        }
+    }
+
+    roots
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = BTreeSet::new();
+    let mut deduped = Vec::new();
+
+    for path in paths {
+        if seen.insert(path.clone()) {
+            deduped.push(path);
+        }
+    }
+
+    deduped
 }
 
 pub fn parse_kindle_clippings(content: &str) -> Result<Vec<KindleEntry>> {
@@ -93,7 +249,14 @@ pub fn convert_to_markdown(entries: &[KindleEntry]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{convert_to_markdown, parse_kindle_clippings};
+    use super::{
+        HostPlatform, clippings_paths_for_device_root, convert_to_markdown, copy_kindle_clippings,
+        default_pull_destination, device_roots_for_platform, find_kindle_clippings_path_from_roots,
+        parse_kindle_clippings,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     const SAMPLE_INPUT: &str = r#"The Rust Programming Language (Steve Klabnik, Carol Nichols) - Your Highlight on page 23 | Location 234-236 | Added on Friday, August 9, 2024 12:34:56 PM
 
@@ -164,5 +327,70 @@ Beta
 
         assert!(markdown.contains("# Book One by Author A"));
         assert!(markdown.contains("\n---\n\n# Book Two by Author B"));
+    }
+
+    #[test]
+    fn builds_clippings_paths_for_root_and_documents_folder() {
+        let root = PathBuf::from("/Volumes/Kindle");
+        let candidates = clippings_paths_for_device_root(&root);
+
+        assert_eq!(
+            candidates[0],
+            PathBuf::from("/Volumes/Kindle/My Clippings.txt")
+        );
+        assert_eq!(
+            candidates[1],
+            PathBuf::from("/Volumes/Kindle/documents/My Clippings.txt")
+        );
+    }
+
+    #[test]
+    fn defaults_pull_destination_to_local_folder() {
+        assert_eq!(
+            default_pull_destination(),
+            PathBuf::from("local").join("my-clippings.txt")
+        );
+    }
+
+    #[test]
+    fn finds_first_existing_clippings_file_from_roots() {
+        let temp = tempdir().expect("temp dir should exist");
+        let kindle = temp.path().join("Kindle");
+        fs::create_dir_all(kindle.join("documents")).expect("kindle dir should exist");
+        fs::write(
+            kindle.join("documents").join("My Clippings.txt"),
+            SAMPLE_INPUT,
+        )
+        .expect("sample clippings should be written");
+
+        let discovered =
+            find_kindle_clippings_path_from_roots(&[kindle]).expect("file should be found");
+
+        assert!(discovered.ends_with("documents/My Clippings.txt"));
+    }
+
+    #[test]
+    fn copies_clippings_and_creates_destination_parent() {
+        let temp = tempdir().expect("temp dir should exist");
+        let source = temp.path().join("My Clippings.txt");
+        let destination = temp.path().join("local").join("copied.txt");
+        fs::write(&source, SAMPLE_INPUT).expect("source clippings should be written");
+
+        let original =
+            copy_kindle_clippings(Some(&source), &destination).expect("copy should succeed");
+
+        assert_eq!(original, source);
+        assert_eq!(
+            fs::read_to_string(destination).expect("destination should be readable"),
+            SAMPLE_INPUT
+        );
+    }
+
+    #[test]
+    fn wsl_roots_cover_windows_mount_points() {
+        let roots = device_roots_for_platform(HostPlatform::Wsl, None);
+
+        assert!(roots.contains(&PathBuf::from("/mnt/c")));
+        assert!(roots.contains(&PathBuf::from("/mnt/z")));
     }
 }

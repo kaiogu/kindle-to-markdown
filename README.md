@@ -47,6 +47,18 @@ Output:
 cargo run -- -i sample_clippings.txt
 ```
 
+Copy `My Clippings.txt` from a connected Kindle into `local/`:
+
+```bash
+cargo run -- pull
+```
+
+Override the source or destination explicitly:
+
+```bash
+cargo run -- pull --source "/path/to/My Clippings.txt" --dest local/my-clippings.txt
+```
+
 Write to a file:
 
 ```bash
@@ -59,6 +71,17 @@ Build a release binary:
 cargo build --release
 ./target/release/kindle-to-markdown -i "My Clippings.txt" -o highlights.md
 ```
+
+## Device Import
+
+The `pull` command looks for `My Clippings.txt` in the common device mount locations for:
+
+- macOS: `/Volumes/<Kindle>/`
+- Linux: `/run/media/<user>/...`, `/media/<user>/...`, and `/mnt/...`
+- Windows: removable drive roots like `E:\`
+- WSL: Windows drive mounts like `/mnt/e/`
+
+It checks both the device root and `documents/My Clippings.txt`, then copies the first match into `local/my-clippings.txt` by default.
 
 ## Development Workflow
 

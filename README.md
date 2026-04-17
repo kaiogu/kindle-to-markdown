@@ -77,6 +77,12 @@ Write a single Markdown file to an explicit path:
 cargo run -- export --output my-notes/highlights.md --save-raw
 ```
 
+Suppress the default per-book statistics output:
+
+```bash
+cargo run -- export --no-stats
+```
+
 Copy only the raw Kindle file into `local/`:
 
 ```bash
@@ -111,6 +117,8 @@ The `export` command uses the same discovery logic. If you do not pass `--save-r
 
 - single-file export: next to the Markdown file
 - directory export: inside the output directory
+
+Both `export` and direct conversion print per-book counts by default to `stderr`. Use `--no-stats` to silence the statistics summary.
 
 ## Development Workflow
 

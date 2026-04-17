@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use kindle_to_markdown::{
     OutputLayout, convert_to_markdown, copy_kindle_clippings, default_pull_destination,
     find_kindle_clippings_path, parse_kindle_clippings, raw_destination_for_output,
-    resolve_output_target, write_markdown_output,
+    render_book_stats, resolve_output_target, write_markdown_output,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -20,6 +20,9 @@ struct Cli {
 
     #[arg(short, long)]
     output: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    no_stats: bool,
 }
 
 #[derive(Subcommand)]
@@ -56,6 +59,9 @@ struct ExportArgs {
 
     #[arg(long, value_enum, default_value_t = LayoutArg::Single)]
     layout: LayoutArg,
+
+    #[arg(long, default_value_t = false)]
+    no_stats: bool,
 }
 
 fn main() -> Result<()> {
@@ -64,11 +70,11 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Command::Pull(args)) => pull_clippings(args),
         Some(Command::Export(args)) => export_clippings(args),
-        None => convert_command(cli.input, cli.output),
+        None => convert_command(cli.input, cli.output, cli.no_stats),
     }
 }
 
-fn convert_command(input: Option<PathBuf>, output: Option<PathBuf>) -> Result<()> {
+fn convert_command(input: Option<PathBuf>, output: Option<PathBuf>, no_stats: bool) -> Result<()> {
     let input = input.context("missing required argument `--input`; or use `pull` to copy My Clippings.txt from a connected Kindle")?;
     let input_content = fs::read_to_string(&input)?;
     let entries = parse_kindle_clippings(&input_content)?;
@@ -86,6 +92,10 @@ fn convert_command(input: Option<PathBuf>, output: Option<PathBuf>) -> Result<()
         None => {
             println!("{}", markdown);
         }
+    }
+
+    if !no_stats {
+        eprintln!("{}", render_book_stats(&entries));
     }
 
     Ok(())
@@ -146,6 +156,10 @@ fn export_clippings(args: ExportArgs) -> Result<()> {
     if args.save_raw {
         let raw_path = raw_destination_for_output(&input_path, &output_target);
         println!("Saved raw clippings to {}", raw_path.display());
+    }
+
+    if !args.no_stats {
+        eprintln!("{}", render_book_stats(&entries));
     }
 
     Ok(())

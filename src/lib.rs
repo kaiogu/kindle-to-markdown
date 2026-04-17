@@ -35,6 +35,16 @@ pub enum OutputTarget {
     Directory(PathBuf),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookStats {
+    pub title: String,
+    pub author: String,
+    pub highlights: usize,
+    pub notes: usize,
+    pub bookmarks: usize,
+    pub other: usize,
+}
+
 pub fn detect_host_platform() -> HostPlatform {
     if cfg!(windows) {
         HostPlatform::Windows
@@ -323,6 +333,65 @@ pub fn convert_to_markdown(entries: &[KindleEntry]) -> String {
     markdown
 }
 
+pub fn collect_book_stats(entries: &[KindleEntry]) -> Vec<BookStats> {
+    let mut stats = Vec::<BookStats>::new();
+
+    for entry in entries {
+        let stat = if let Some(stat) = stats
+            .iter_mut()
+            .find(|stat| stat.title == entry.title && stat.author == entry.author)
+        {
+            stat
+        } else {
+            stats.push(BookStats {
+                title: entry.title.clone(),
+                author: entry.author.clone(),
+                highlights: 0,
+                notes: 0,
+                bookmarks: 0,
+                other: 0,
+            });
+            stats.last_mut().expect("stats entry was just pushed")
+        };
+
+        match entry.entry_type.as_str() {
+            "Highlight" => stat.highlights += 1,
+            "Note" => stat.notes += 1,
+            "Bookmark" => stat.bookmarks += 1,
+            _ => stat.other += 1,
+        }
+    }
+
+    stats
+}
+
+pub fn render_book_stats(entries: &[KindleEntry]) -> String {
+    let book_stats = collect_book_stats(entries);
+    let highlights: usize = book_stats.iter().map(|book| book.highlights).sum();
+    let notes: usize = book_stats.iter().map(|book| book.notes).sum();
+    let bookmarks: usize = book_stats.iter().map(|book| book.bookmarks).sum();
+    let other: usize = book_stats.iter().map(|book| book.other).sum();
+
+    let mut output = format!(
+        "Statistics: {} entries across {} books (highlights: {}, notes: {}, bookmarks: {}, other: {})\n",
+        entries.len(),
+        book_stats.len(),
+        highlights,
+        notes,
+        bookmarks,
+        other
+    );
+
+    for book in book_stats {
+        output.push_str(&format!(
+            "- {} by {}: highlights {}, notes {}, bookmarks {}, other {}\n",
+            book.title, book.author, book.highlights, book.notes, book.bookmarks, book.other
+        ));
+    }
+
+    output.trim_end().to_string()
+}
+
 pub fn write_markdown_output(
     entries: &[KindleEntry],
     output_target: &OutputTarget,
@@ -435,11 +504,11 @@ fn slugify_book_title(title: &str, author: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        HostPlatform, OutputLayout, OutputTarget, clippings_paths_for_device_root,
-        convert_to_markdown, copy_kindle_clippings, default_export_directory,
+        BookStats, HostPlatform, OutputLayout, OutputTarget, clippings_paths_for_device_root,
+        collect_book_stats, convert_to_markdown, copy_kindle_clippings, default_export_directory,
         default_pull_destination, device_roots_for_platform, find_kindle_clippings_path_from_roots,
         parse_kindle_clippings, parse_title_and_author, raw_destination_for_output,
-        resolve_output_target, write_markdown_output,
+        render_book_stats, resolve_output_target, write_markdown_output,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -764,5 +833,46 @@ Gamma
         assert!(
             rendered.contains("# The Rust Programming Language by Steve Klabnik, Carol Nichols")
         );
+    }
+
+    #[test]
+    fn collects_stats_per_book_and_entry_type() {
+        let entries = parse_kindle_clippings(TWO_LINE_KINDLE_INPUT).expect("input should parse");
+
+        let stats = collect_book_stats(&entries);
+
+        assert_eq!(
+            stats,
+            vec![
+                BookStats {
+                    title: "The Sirens of Titan".to_string(),
+                    author: "Kurt Vonnegut".to_string(),
+                    highlights: 1,
+                    notes: 0,
+                    bookmarks: 0,
+                    other: 0,
+                },
+                BookStats {
+                    title: "The Conscious Mind (Philosophy of Mind)".to_string(),
+                    author: "David J. Chalmers".to_string(),
+                    highlights: 0,
+                    notes: 1,
+                    bookmarks: 0,
+                    other: 0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn renders_stats_summary_and_book_lines() {
+        let entries = parse_kindle_clippings(TWO_LINE_KINDLE_INPUT).expect("input should parse");
+        let rendered = render_book_stats(&entries);
+
+        assert!(rendered.contains("Statistics: 2 entries across 2 books"));
+        assert!(rendered.contains(
+            "- The Sirens of Titan by Kurt Vonnegut: highlights 1, notes 0, bookmarks 0, other 0"
+        ));
+        assert!(rendered.contains("- The Conscious Mind (Philosophy of Mind) by David J. Chalmers: highlights 0, notes 1, bookmarks 0, other 0"));
     }
 }
